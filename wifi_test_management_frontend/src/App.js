@@ -6,6 +6,8 @@ import Layout from "./components/layout/Layout";
 import Dashboard from "./pages/Dashboard";
 import ProjectsList from "./pages/projects/ProjectsList";
 import ProjectDetail from "./pages/projects/ProjectDetail";
+import CreateProject from "./pages/projects/CreateProject";
+import EditProject from "./pages/projects/EditProject";
 import TestCasesList from "./pages/testCases/TestCasesList";
 import TestCaseDetail from "./pages/testCases/TestCaseDetail";
 import ExecutionsList from "./pages/executions/ExecutionsList";
@@ -25,6 +27,8 @@ function App() {
           <Route path="/dashboard" element={<Dashboard />} />
 
           <Route path="/projects" element={<ProjectsList />} />
+          <Route path="/projects/new" element={<CreateProject />} />
+          <Route path="/projects/:projectId/edit" element={<EditProject />} />
           <Route path="/projects/:projectId" element={<ProjectDetail />} />
 
           <Route path="/test-cases" element={<TestCasesList />} />
