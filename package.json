@@ -1,0 +1,14 @@
+{
+  "name": "wifi-testing-management-platform-6807-6816",
+  "version": "0.1.0",
+  "private": true,
+  "description": "WiFi testing management platform (React frontend + Express mock backend).",
+  "scripts": {
+    "dev": "concurrently -n backend,frontend -c green,blue \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:frontend": "npm --prefix wifi_test_management_frontend start"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

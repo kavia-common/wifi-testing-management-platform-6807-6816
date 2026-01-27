@@ -11,8 +11,17 @@ import { getRuntimeApiMode } from "./runtimeMode";
 // PUBLIC_INTERFACE
 export function getDefaultApiConfig() {
   /** Returns default API configuration derived from environment and runtime flags. */
+  // Default to local backend in dev, but allow overriding via env vars.
+  // Preference order:
+  // - REACT_APP_API_BASE_URL (requested)
+  // - REACT_APP_API_BASE (existing)
+  // - REACT_APP_BACKEND_URL (existing)
+  // - fallback: http://localhost:4000
   const baseUrl =
-    (process.env.REACT_APP_API_BASE || process.env.REACT_APP_BACKEND_URL || "")
+    (process.env.REACT_APP_API_BASE_URL ||
+      process.env.REACT_APP_API_BASE ||
+      process.env.REACT_APP_BACKEND_URL ||
+      "http://localhost:4000")
       .toString()
       .trim();
 

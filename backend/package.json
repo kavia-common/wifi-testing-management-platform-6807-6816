@@ -1,0 +1,15 @@
+{
+  "name": "wifi-test-management-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Simple mock backend API for the WiFi Testing Management Platform (Express).",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "NODE_ENV=production node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "4.21.2"
+  }
+}
