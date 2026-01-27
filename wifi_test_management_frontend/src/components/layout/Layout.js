@@ -1,32 +1,36 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import Header from "./Header";
 import Sidebar from "./Sidebar";
 import Notifications from "./Notifications";
+import { getDefaultApiConfig } from "../../api";
+import { useToast } from "../../api";
 
-/**
- * Classic app shell layout:
- * - fixed header
- * - fixed sidebar
- * - scrollable main content
- * - top-right notifications overlay
- */
-// PUBLIC_INTERFACE
+ /**
+  * Classic app shell layout:
+  * - fixed header
+  * - fixed sidebar
+  * - scrollable main content
+  * - top-right notifications overlay
+  */
+ // PUBLIC_INTERFACE
 export default function Layout({ children }) {
   /** Application shell layout that wraps routed content. */
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const toast = useToast();
 
-  // Placeholder notifications (no backend integration yet)
-  const notifications = useMemo(
-    () => [
-      {
-        id: "n1",
-        level: "info",
-        title: "Welcome",
-        message: "Ocean Professional theme loaded.",
-      },
-    ],
-    []
-  );
+  // On first mount, show whether we're using mock or real backend.
+  useEffect(() => {
+    const cfg = getDefaultApiConfig();
+    toast.push({
+      level: "info",
+      title: "API mode",
+      message: cfg.useMock
+        ? "Using mock API (no base URL configured or mock forced)."
+        : "Using real backend API.",
+      ttlMs: 3000,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="app-shell">
@@ -45,7 +49,7 @@ export default function Layout({ children }) {
         </main>
       </div>
 
-      <Notifications items={notifications} />
+      <Notifications items={toast.items} />
     </div>
   );
 }
