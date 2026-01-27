@@ -6,6 +6,8 @@
  * - Preference order: REACT_APP_API_BASE then REACT_APP_BACKEND_URL then "".
  */
 
+import { getRuntimeApiMode } from "./runtimeMode";
+
 // PUBLIC_INTERFACE
 export function getDefaultApiConfig() {
   /** Returns default API configuration derived from environment and runtime flags. */
@@ -14,15 +16,20 @@ export function getDefaultApiConfig() {
       .toString()
       .trim();
 
-  const mockFlag =
-    typeof window !== "undefined" && window.__USE_MOCK_API__ === true;
+  // Runtime override: query param / localStorage / legacy window flag.
+  const runtimeMode = getRuntimeApiMode(); // "mock" | "real" | null
 
   // If no base URL is configured, default to mock mode for a usable UI.
-  const useMock = mockFlag || !baseUrl;
+  // If runtimeMode is "real" but baseUrl is empty, we still must use mock.
+  const useMock =
+    runtimeMode === "mock" ? true : runtimeMode === "real" ? !baseUrl : !baseUrl;
+
+  const modeLabel = useMock ? "mock" : "real";
 
   return {
     baseUrl,
     useMock,
+    modeLabel,
     // Default request timeout. Keep conservative to avoid hanging UI.
     timeoutMs: 12_000,
   };

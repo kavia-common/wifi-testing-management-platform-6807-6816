@@ -100,6 +100,31 @@
   gap: var(--space-3);
 }
 
+.api-mode-badge {
+  margin-left: var(--space-3);
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(17, 24, 39, 0.12);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: 1;
+  user-select: none;
+}
+
+.api-mode-badge--mock {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.35);
+  color: #7c3e00;
+}
+
+.api-mode-badge--real {
+  background: rgba(5, 150, 105, 0.12);
+  border-color: rgba(5, 150, 105, 0.32);
+  color: #065f46;
+}
+
 .header__user-pill {
   display: flex;
   align-items: center;

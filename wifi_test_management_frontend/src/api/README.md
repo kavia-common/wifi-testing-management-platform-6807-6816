@@ -29,21 +29,29 @@ Set one of the following in your environment:
 
 Restart the dev server after changing env vars.
 
-### Force mock API (useful for demos / offline work)
+### Force mock/real at runtime (developer toggle)
 
-In the browser console:
+This app supports a lightweight runtime override:
+
+1) **Query param** (persists automatically via localStorage):
+
+- Force mock: `?api=mock`
+- Force real: `?api=real` (will still fall back to mock if no base URL is configured)
+
+2) **localStorage**:
+
+- Key: `wifi_tm_api_mode` = `"mock"` or `"real"`
+
+Legacy (still supported):
 
 ```js
-window.__USE_MOCK_API__ = true;
+window.__USE_MOCK_API__ = true; // mock
 window.location.reload();
 ```
 
-To go back to real API:
+### Mode indicator
 
-```js
-window.__USE_MOCK_API__ = false;
-window.location.reload();
-```
+The header shows a small badge: **MOCK API** or **REAL API** (with base URL in tooltip).
 
 ## Result object shape
 

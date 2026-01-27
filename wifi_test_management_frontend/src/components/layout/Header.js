@@ -1,7 +1,12 @@
 import React from "react";
 
 // PUBLIC_INTERFACE
-export default function Header({ onToggleSidebar, isSidebarCollapsed }) {
+export default function Header({
+  onToggleSidebar,
+  isSidebarCollapsed,
+  apiModeLabel,
+  apiBaseUrl,
+}) {
   return (
     <header className="header" role="banner">
       <div className="header__left">
@@ -23,6 +28,18 @@ export default function Header({ onToggleSidebar, isSidebarCollapsed }) {
         <div className="header__title">
           <div className="header__app-name">WiFi Test Management</div>
           <div className="header__subtitle">Platform</div>
+        </div>
+
+        <div
+          className={`api-mode-badge api-mode-badge--${apiModeLabel || "unknown"}`}
+          title={
+            apiModeLabel === "real"
+              ? `Real API: ${apiBaseUrl || "(no base URL)"}`
+              : "Mock API (in-memory)"
+          }
+          aria-label={`API mode: ${apiModeLabel || "unknown"}`}
+        >
+          {apiModeLabel === "real" ? "REAL API" : "MOCK API"}
         </div>
       </div>
 
