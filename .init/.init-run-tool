@@ -1,0 +1,4 @@
+{
+    "command": "PORT=<port> HOST=<host> BROWSER=none npm start",
+    "working_directory": "/home/kavia/workspace/code-generation/wifi-testing-management-platform-6807-6816/wifi_test_management_frontend"
+}
