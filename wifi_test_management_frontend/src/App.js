@@ -10,6 +10,8 @@ import CreateProject from "./pages/projects/CreateProject";
 import EditProject from "./pages/projects/EditProject";
 import TestCasesList from "./pages/testCases/TestCasesList";
 import TestCaseDetail from "./pages/testCases/TestCaseDetail";
+import CreateTestCase from "./pages/testCases/CreateTestCase";
+import EditTestCase from "./pages/testCases/EditTestCase";
 import ExecutionsList from "./pages/executions/ExecutionsList";
 import ExecutionDetail from "./pages/executions/ExecutionDetail";
 import ResultsList from "./pages/results/ResultsList";
@@ -32,6 +34,12 @@ function App() {
           <Route path="/projects/:projectId" element={<ProjectDetail />} />
 
           <Route path="/test-cases" element={<TestCasesList />} />
+          <Route path="/test-cases/new" element={<CreateTestCase />} />
+          <Route
+            path="/projects/:projectId/test-cases/new"
+            element={<CreateTestCase />}
+          />
+          <Route path="/test-cases/:testCaseId/edit" element={<EditTestCase />} />
           <Route path="/test-cases/:testCaseId" element={<TestCaseDetail />} />
 
           <Route path="/executions" element={<ExecutionsList />} />
