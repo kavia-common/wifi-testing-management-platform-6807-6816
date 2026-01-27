@@ -1,15 +1,17 @@
 import React, { useMemo } from "react";
+import { NavLink } from "react-router-dom";
 
 const NAV_ITEMS = [
-  { id: "dashboard", label: "Dashboard" },
-  { id: "projects", label: "Projects" },
-  { id: "testCases", label: "Test Cases" },
-  { id: "executions", label: "Executions" },
-  { id: "results", label: "Results" },
+  { id: "dashboard", label: "Dashboard", to: "/dashboard", end: true },
+  { id: "projects", label: "Projects", to: "/projects" },
+  { id: "testCases", label: "Test Cases", to: "/test-cases" },
+  { id: "executions", label: "Executions", to: "/executions" },
+  { id: "results", label: "Results", to: "/results" },
 ];
 
 // PUBLIC_INTERFACE
-export default function Sidebar({ collapsed = false, activeId = "dashboard" }) {
+export default function Sidebar({ collapsed = false }) {
+  /** Sidebar module navigation; active state is derived from the current route. */
   const items = useMemo(() => NAV_ITEMS, []);
 
   return (
@@ -20,24 +22,20 @@ export default function Sidebar({ collapsed = false, activeId = "dashboard" }) {
         </div>
 
         <nav className="sidebar__nav" aria-label="Primary navigation">
-          {items.map((item) => {
-            const isActive = item.id === activeId;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                className={`sidebar__nav-item ${
-                  isActive ? "sidebar__nav-item--active" : ""
-                }`}
-                aria-current={isActive ? "page" : undefined}
-                // Routing intentionally not implemented yet
-                onClick={() => {}}
-              >
-                <span className="sidebar__dot" aria-hidden="true" />
-                {!collapsed && <span>{item.label}</span>}
-              </button>
-            );
-          })}
+          {items.map((item) => (
+            <NavLink
+              key={item.id}
+              to={item.to}
+              end={item.end}
+              className={({ isActive }) =>
+                `sidebar__nav-item ${isActive ? "sidebar__nav-item--active" : ""}`
+              }
+              aria-label={item.label}
+            >
+              <span className="sidebar__dot" aria-hidden="true" />
+              {!collapsed && <span>{item.label}</span>}
+            </NavLink>
+          ))}
         </nav>
       </div>
 
@@ -46,7 +44,7 @@ export default function Sidebar({ collapsed = false, activeId = "dashboard" }) {
           <div className="sidebar__hint">
             <div className="sidebar__hint-title">Tip</div>
             <div className="sidebar__hint-text">
-              Use the sidebar to switch modules once routing is enabled.
+              Use the sidebar to switch modules.
             </div>
           </div>
         ) : (

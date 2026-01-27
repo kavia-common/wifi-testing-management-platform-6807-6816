@@ -1,14 +1,43 @@
 import React from "react";
 import "./App.css";
+import { Navigate, Route, Routes } from "react-router-dom";
 import Layout from "./components/layout/Layout";
+
 import Dashboard from "./pages/Dashboard";
+import ProjectsList from "./pages/projects/ProjectsList";
+import ProjectDetail from "./pages/projects/ProjectDetail";
+import TestCasesList from "./pages/testCases/TestCasesList";
+import TestCaseDetail from "./pages/testCases/TestCaseDetail";
+import ExecutionsList from "./pages/executions/ExecutionsList";
+import ExecutionDetail from "./pages/executions/ExecutionDetail";
+import ResultsList from "./pages/results/ResultsList";
+import ResultDetail from "./pages/results/ResultDetail";
 
 // PUBLIC_INTERFACE
 function App() {
+  /** Root application component that defines client-side routes. */
   return (
     <div className="App">
-      <Layout activeNavId="dashboard">
-        <Dashboard />
+      <Layout>
+        <Routes>
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+
+          <Route path="/dashboard" element={<Dashboard />} />
+
+          <Route path="/projects" element={<ProjectsList />} />
+          <Route path="/projects/:projectId" element={<ProjectDetail />} />
+
+          <Route path="/test-cases" element={<TestCasesList />} />
+          <Route path="/test-cases/:testCaseId" element={<TestCaseDetail />} />
+
+          <Route path="/executions" element={<ExecutionsList />} />
+          <Route path="/executions/:executionId" element={<ExecutionDetail />} />
+
+          <Route path="/results" element={<ResultsList />} />
+          <Route path="/results/:resultId" element={<ResultDetail />} />
+
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        </Routes>
       </Layout>
     </div>
   );

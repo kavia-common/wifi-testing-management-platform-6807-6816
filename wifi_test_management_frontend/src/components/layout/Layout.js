@@ -11,7 +11,8 @@ import Notifications from "./Notifications";
  * - top-right notifications overlay
  */
 // PUBLIC_INTERFACE
-export default function Layout({ children, activeNavId = "dashboard" }) {
+export default function Layout({ children }) {
+  /** Application shell layout that wraps routed content. */
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   // Placeholder notifications (no backend integration yet)
@@ -35,7 +36,7 @@ export default function Layout({ children, activeNavId = "dashboard" }) {
       />
 
       <div className="app-shell__body">
-        <Sidebar collapsed={isSidebarCollapsed} activeId={activeNavId} />
+        <Sidebar collapsed={isSidebarCollapsed} />
 
         <main className="app-shell__main" role="main">
           <div className="page">
