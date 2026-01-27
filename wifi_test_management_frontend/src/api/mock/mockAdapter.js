@@ -145,6 +145,9 @@ export function createMockAdapter({ latencyMs = 250 } = {}) {
       {
         id: "r-7001",
         executionId: "ex-9001",
+        projectId: "p-001",
+        testCaseId: "tc-101",
+        status: "Pass",
         verdict: "PASS",
         label: "Throughput - 5GHz",
         createdAt: nowIso(),
@@ -153,8 +156,22 @@ export function createMockAdapter({ latencyMs = 250 } = {}) {
       {
         id: "r-7002",
         executionId: "ex-9001",
+        projectId: "p-001",
+        testCaseId: "tc-101",
+        status: "Fail",
         verdict: "FAIL",
         label: "Latency - VoIP profile",
+        createdAt: nowIso(),
+        updatedAt: nowIso(),
+      },
+      {
+        id: "r-7003",
+        executionId: "ex-9002",
+        projectId: "p-002",
+        testCaseId: "tc-102",
+        status: "Running",
+        verdict: "—",
+        label: "Roaming soak - interim",
         createdAt: nowIso(),
         updatedAt: nowIso(),
       },
@@ -204,10 +221,24 @@ export function createMockAdapter({ latencyMs = 250 } = {}) {
       const id = idFromPath(path, "results");
       const query = parseQuery(path);
 
-      if (!id && query.executionId) {
-        return ok(
-          clone(db.results.filter((r) => r.executionId === query.executionId))
-        );
+      if (!id) {
+        let rows = db.results;
+
+        if (query.executionId) {
+          rows = rows.filter((r) => r.executionId === query.executionId);
+        }
+        if (query.projectId) {
+          rows = rows.filter((r) => r.projectId === query.projectId);
+        }
+        if (query.testCaseId) {
+          rows = rows.filter((r) => r.testCaseId === query.testCaseId);
+        }
+        if (query.status) {
+          const q = String(query.status).toLowerCase();
+          rows = rows.filter((r) => String(r.status || "").toLowerCase() === q);
+        }
+
+        return ok(clone(rows));
       }
 
       return listOr404(db.results, id);

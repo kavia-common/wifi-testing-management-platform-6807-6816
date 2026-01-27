@@ -16,10 +16,31 @@
  * @property {string=} updatedAt
  */
 
+function buildQuery(params = {}) {
+  const sp = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v == null) return;
+    const str = String(v);
+    if (!str) return;
+    sp.set(k, str);
+  });
+  const qs = sp.toString();
+  return qs ? `?${qs}` : "";
+}
+
 // PUBLIC_INTERFACE
-export async function listResults(client, { executionId } = {}) {
-  /** Fetch results, optionally filtered by executionId. */
-  const qs = executionId ? `?executionId=${encodeURIComponent(executionId)}` : "";
+export async function listResults(
+  client,
+  { executionId, projectId, testCaseId, status } = {}
+) {
+  /** Fetch results, optionally filtered by executionId/projectId/testCaseId/status. */
+  const qs = buildQuery({
+    executionId,
+    projectId,
+    testCaseId,
+    status,
+  });
+
   return client.get(`/results${qs}`);
 }
 
