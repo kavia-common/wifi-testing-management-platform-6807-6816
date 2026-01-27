@@ -14,6 +14,7 @@ import CreateTestCase from "./pages/testCases/CreateTestCase";
 import EditTestCase from "./pages/testCases/EditTestCase";
 import ExecutionsList from "./pages/executions/ExecutionsList";
 import ExecutionDetail from "./pages/executions/ExecutionDetail";
+import CreateExecution from "./pages/executions/CreateExecution";
 import ResultsList from "./pages/results/ResultsList";
 import ResultDetail from "./pages/results/ResultDetail";
 
@@ -43,6 +44,7 @@ function App() {
           <Route path="/test-cases/:testCaseId" element={<TestCaseDetail />} />
 
           <Route path="/executions" element={<ExecutionsList />} />
+          <Route path="/executions/new" element={<CreateExecution />} />
           <Route path="/executions/:executionId" element={<ExecutionDetail />} />
 
           <Route path="/results" element={<ResultsList />} />

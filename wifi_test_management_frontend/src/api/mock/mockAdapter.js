@@ -126,6 +126,8 @@ export function createMockAdapter({ latencyMs = 250 } = {}) {
       {
         id: "ex-9001",
         projectId: "p-001",
+        testCaseId: "tc-101",
+        label: "Nightly regression",
         status: "Completed",
         startedAt: nowIso(),
         finishedAt: nowIso(),
@@ -133,6 +135,8 @@ export function createMockAdapter({ latencyMs = 250 } = {}) {
       {
         id: "ex-9002",
         projectId: "p-002",
+        testCaseId: "tc-102",
+        label: "Roaming soak test",
         status: "Running",
         startedAt: nowIso(),
       },
