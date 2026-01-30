@@ -10,11 +10,11 @@ import { createMockAdapter } from "./mock/mockAdapter";
 
 // PUBLIC_INTERFACE
 export function createApiClient(overrides = {}) {
-  /** Creates an API client instance (mock or real) based on env + runtime flags. */
   const defaults = getDefaultApiConfig();
   const config = { ...defaults, ...overrides };
 
-  if (config.useMock) {
+  // ✅ mock 開關：mockApiEnabled 或 useMock 任一成立就走 mock
+  if (config.mockApiEnabled === true || config.useMock === true) {
     return createMockAdapter();
   }
 
