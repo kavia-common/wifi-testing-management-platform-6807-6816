@@ -15,7 +15,6 @@ import {
   subscribeToMockImportChanges,
 } from "../utils/mockImportSettings";
 import { parseTestPlanFile, TESTPLAN_MAPPING_STORAGE_KEY } from "../utils/testPlanParser";
-import { fetchArrayBufferFromUrl } from "../utils/assetLoader";
 
 function getProjectName(projects, projectId) {
   return projects.find((p) => p.id === projectId)?.name || "Unknown project";
@@ -170,10 +169,6 @@ export default function TestCasesPage() {
   const [importing, setImporting] = useState(false);
   const [toasts, setToasts] = useState([]);
 
-  const [assetImportOpen, setAssetImportOpen] = useState(false);
-  const [assetUrl, setAssetUrl] = useState("");
-  const [assetLoading, setAssetLoading] = useState(false);
-
   // Manual mapping UI state
   const [mappingModalOpen, setMappingModalOpen] = useState(false);
   const [mappingCandidates, setMappingCandidates] = useState([]);
@@ -223,26 +218,6 @@ export default function TestCasesPage() {
     return "Mock imports are disabled. Enable “Use mock TestPlan imports” in Settings.";
   }
 
-  function openAssetImport() {
-    const reason = getImportUnavailableReason();
-    if (reason) {
-      pushToast({ variant: "error", title: "Import unavailable", message: reason });
-      return;
-    }
-    setAssetImportOpen(true);
-  }
-
-  function inferFileNameFromUrl(url) {
-    const s = String(url || "");
-    const cut = Math.min(
-      s.indexOf("?") === -1 ? s.length : s.indexOf("?"),
-      s.indexOf("#") === -1 ? s.length : s.indexOf("#")
-    );
-    const clean = s.slice(0, cut);
-    const lastSlash = clean.lastIndexOf("/");
-    return lastSlash === -1 ? clean : clean.slice(lastSlash + 1);
-  }
-
   async function refreshListAfterImport() {
     const latest = await testCasesApi.list();
     setTestCases(Array.isArray(latest) ? latest : []);
@@ -256,9 +231,7 @@ export default function TestCasesPage() {
 
     // Suggest a constant project if user is currently filtering to a specific project.
     const suggestedConstant =
-      projectFilter && projectFilter !== "All"
-        ? getProjectName(projects, projectFilter)
-        : "";
+      projectFilter && projectFilter !== "All" ? getProjectName(projects, projectFilter) : "";
     setMappingProjectConstant((prev) => prev || suggestedConstant);
 
     setMappingModalOpen(true);
@@ -338,51 +311,10 @@ export default function TestCasesPage() {
     }
   }
 
-  async function handleImportFromAssetUrl() {
-    const reason = getImportUnavailableReason();
-    if (reason) {
-      pushToast({ variant: "error", title: "Import unavailable", message: reason });
-      return;
-    }
-
-    const url = String(assetUrl || "").trim();
-    if (!url) {
-      pushToast({ variant: "error", title: "Missing URL", message: "Paste an asset URL to load (Excel .xlsx supported)." });
-      return;
-    }
-
-    setAssetLoading(true);
-    try {
-      const { arrayBuffer, extensionHint, fileNameHint } = await fetchArrayBufferFromUrl(url);
-
-      const nameHint = fileNameHint || inferFileNameFromUrl(url) || "TestPlan.xlsx";
-      const ext = String(extensionHint || "").toLowerCase();
-
-      if (ext !== "xlsx" && !String(nameHint).toLowerCase().endsWith(".xlsx")) {
-        throw new Error("Unsupported asset type. Please provide an Excel .xlsx TestPlan URL.");
-      }
-
-      const file = new File([arrayBuffer], nameHint.endsWith(".xlsx") ? nameHint : `${nameHint}.xlsx`, {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      });
-
-      await runImport({ file, sourceLabel: url });
-      setAssetImportOpen(false);
-    } catch (e) {
-      pushToast({
-        variant: "error",
-        title: "Import failed (Project Asset)",
-        message:
-          e?.message ||
-          "Unable to import asset. Ensure it is a publicly accessible Excel .xlsx TestPlan URL (mock imports enabled).",
-        ttlMs: 9000,
-      });
-    } finally {
-      setAssetLoading(false);
-    }
-  }
-
-  const editingTestCase = useMemo(() => testCases.find((tc) => tc.id === editingId) || null, [editingId, testCases]);
+  const editingTestCase = useMemo(
+    () => testCases.find((tc) => tc.id === editingId) || null,
+    [editingId, testCases]
+  );
 
   const tagOptions = useMemo(() => ["All", ...collectTags(testCases)], [testCases]);
 
@@ -441,9 +373,13 @@ export default function TestCasesPage() {
                 {t}
               </Badge>
             ))}
-            {(tc.tags || []).length > 4 ? <Badge variant="secondary">+{(tc.tags || []).length - 4}</Badge> : null}
+            {(tc.tags || []).length > 4 ? (
+              <Badge variant="secondary">+{(tc.tags || []).length - 4}</Badge>
+            ) : null}
             {(tc.tags || []).length === 0 ? (
-              <span style={{ fontSize: 13, color: "rgba(17, 24, 39, 0.62)", fontWeight: 700 }}>No tags</span>
+              <span style={{ fontSize: 13, color: "rgba(17, 24, 39, 0.62)", fontWeight: 700 }}>
+                No tags
+              </span>
             ) : null}
           </div>
         ),
@@ -453,7 +389,9 @@ export default function TestCasesPage() {
         header: "Updated",
         width: 180,
         render: (tc) => (
-          <span style={{ fontWeight: 800, color: "rgba(17, 24, 39, 0.75)" }}>{formatDateTime(tc.updatedAt)}</span>
+          <span style={{ fontWeight: 800, color: "rgba(17, 24, 39, 0.75)" }}>
+            {formatDateTime(tc.updatedAt)}
+          </span>
         ),
       },
       {
@@ -596,7 +534,7 @@ export default function TestCasesPage() {
   }
 
   const importDisabledReason = getImportUnavailableReason();
-  const importButtonsDisabled = loading || importing || assetLoading || Boolean(importDisabledReason);
+  const importButtonsDisabled = loading || importing || Boolean(importDisabledReason);
 
   const mappingFooter = (
     <div style={{ display: "flex", gap: 10, justifyContent: "space-between", flexWrap: "wrap", width: "100%" }}>
@@ -674,7 +612,7 @@ export default function TestCasesPage() {
               }
             }
           }}
-          disabled={importing || assetLoading}
+          disabled={importing}
         >
           Apply mapping & import
         </Button>
@@ -691,8 +629,7 @@ export default function TestCasesPage() {
             <h1 className="page__title">Test Cases</h1>
             <p className="page__subtitle">
               Manage your test case library with project associations, searchable tags, and runtime parameters. Import
-              TestPlans from CSV, Excel (.xlsx), or JSON. When mock imports are enabled, you can also import directly
-              from a Project Assets document URL.
+              TestPlans from CSV, Excel (.xlsx), or JSON using the local file upload flow.
             </p>
           </div>
 
@@ -711,15 +648,6 @@ export default function TestCasesPage() {
               title={importDisabledReason || "Import a TestPlan file."}
             >
               {importing ? "Importing…" : "Import TestPlan"}
-            </Button>
-
-            <Button
-              variant="secondary"
-              onClick={openAssetImport}
-              disabled={importButtonsDisabled}
-              title={importDisabledReason || "Import a TestPlan from a Project Asset URL."}
-            >
-              Import from Project Assets
             </Button>
 
             <Button variant="primary" onClick={openCreate} disabled={loading}>
@@ -775,7 +703,9 @@ export default function TestCasesPage() {
           </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12, alignItems: "center" }}>
-            <Badge variant={isMockModeEnabled() ? "primary" : "neutral"}>{isMockModeEnabled() ? "Mock mode" : "API mode"}</Badge>
+            <Badge variant={isMockModeEnabled() ? "primary" : "neutral"}>
+              {isMockModeEnabled() ? "Mock mode" : "API mode"}
+            </Badge>
 
             <Badge variant={mockImportEnabled ? "success" : "secondary"}>
               {mockImportEnabled ? "Mock imports on" : "Mock imports off"}
@@ -863,46 +793,6 @@ export default function TestCasesPage() {
         />
 
         <Modal
-          open={assetImportOpen}
-          title="Import from Project Assets"
-          description="Paste a Project Assets → Documents URL to an Excel (.xlsx) TestPlan and import it."
-          onClose={() => {
-            if (assetLoading) return;
-            setAssetImportOpen(false);
-          }}
-          footer={
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
-              <Button variant="ghost" onClick={() => setAssetImportOpen(false)} disabled={assetLoading}>
-                Cancel
-              </Button>
-              <Button variant="primary" onClick={handleImportFromAssetUrl} loading={assetLoading} disabled={assetLoading}>
-                Load & Import
-              </Button>
-            </div>
-          }
-        >
-          <TextInput
-            label="Asset URL"
-            value={assetUrl}
-            onChange={(e) => setAssetUrl(e.target.value)}
-            placeholder="https://…/WiFi%20Function%20TestPlan.xlsx"
-            ariaLabel="Project Asset URL"
-            helperText={
-              importDisabledReason
-                ? `Import unavailable: ${importDisabledReason}`
-                : "Tip: The URL must be accessible from your browser (CORS/public access)."
-            }
-            disabled={assetLoading}
-            autoComplete="off"
-            inputMode="url"
-          />
-          <div style={{ fontSize: 12, color: "rgba(17, 24, 39, 0.62)", marginTop: 10, lineHeight: 1.45 }}>
-            Supported format: Excel <span style={{ fontWeight: 900 }}>.xlsx</span>. If the URL cannot be fetched due to
-            CORS restrictions, download the file locally and use “Import TestPlan”.
-          </div>
-        </Modal>
-
-        <Modal
           open={mappingModalOpen}
           size="sm"
           title="Map TestPlan headers"
@@ -912,7 +802,8 @@ export default function TestCasesPage() {
         >
           <div style={{ display: "grid", gap: 12 }}>
             <div style={{ fontSize: 12, color: "rgba(17, 24, 39, 0.7)", lineHeight: 1.45 }}>
-              This is helpful when your Excel file has multi-row headers (e.g. “Project” + “(项目)”) or merged header cells.
+              This is helpful when your Excel file has multi-row headers (e.g. “Project” + “(项目)”) or merged header
+              cells.
             </div>
 
             <div style={{ display: "grid", gap: 10 }}>
@@ -1001,8 +892,8 @@ export default function TestCasesPage() {
               />
 
               <div style={{ fontSize: 12, color: "rgba(17, 24, 39, 0.62)", lineHeight: 1.45 }}>
-                Mapping is saved in localStorage (<span style={{ fontWeight: 900 }}>{TESTPLAN_MAPPING_STORAGE_KEY}</span>) and
-                can be reset here or in Settings. Constant Project is applied only for the current import.
+                Mapping is saved in localStorage (<span style={{ fontWeight: 900 }}>{TESTPLAN_MAPPING_STORAGE_KEY}</span>)
+                and can be reset here or in Settings. Constant Project is applied only for the current import.
               </div>
             </div>
           </div>
