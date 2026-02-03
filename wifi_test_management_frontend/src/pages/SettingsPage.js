@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Badge, Button } from "../components/ui";
 import { isMockModeEnabled, setMockModeEnabled } from "../api";
 import { isMockImportEnabled, setMockImportEnabled } from "../utils/mockImportSettings";
+import { TESTPLAN_MAPPING_STORAGE_KEY } from "../utils/testPlanParser";
 
 function ToggleRow({ title, description, value, onChange, rightHint }) {
   return (
@@ -39,15 +40,40 @@ function ToggleRow({ title, description, value, onChange, rightHint }) {
   );
 }
 
+function readMapping() {
+  try {
+    const raw = window?.localStorage?.getItem(TESTPLAN_MAPPING_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return {
+      name: typeof parsed.name === "string" ? parsed.name : "",
+      project: typeof parsed.project === "string" ? parsed.project : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function clearMapping() {
+  try {
+    window?.localStorage?.removeItem(TESTPLAN_MAPPING_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 // PUBLIC_INTERFACE
 export default function SettingsPage() {
   /** Settings route: environment toggles and developer preferences (localStorage-backed). */
   const [mockMode, setMockMode] = useState(isMockModeEnabled());
   const [mockImports, setMockImports] = useState(isMockImportEnabled());
+  const [mapping, setMapping] = useState(() => readMapping());
 
   useEffect(() => {
     setMockMode(isMockModeEnabled());
     setMockImports(isMockImportEnabled());
+    setMapping(readMapping());
   }, []);
 
   function handleToggleMockMode(next) {
@@ -56,10 +82,14 @@ export default function SettingsPage() {
   }
 
   function handleToggleMockImports(next) {
-    // Writes canonical + legacy keys (see utils/mockImportSettings.js) and broadcasts changes.
     setMockImportEnabled(next);
     setMockImports(next);
   }
+
+  const mappingText = useMemo(() => {
+    if (!mapping?.name && !mapping?.project) return "(none)";
+    return `Name=${mapping?.name || "(unset)"}, Project=${mapping?.project || "(unset)"}`;
+  }, [mapping]);
 
   return (
     <div className="page">
@@ -87,6 +117,47 @@ export default function SettingsPage() {
             onChange={handleToggleMockImports}
             rightHint="If disabled, TestPlan imports are blocked to prevent unintended local store changes."
           />
+
+          <div
+            style={{
+              borderRadius: "var(--radius-lg)",
+              border: "1px solid var(--color-border)",
+              background: "rgba(255, 255, 255, 0.92)",
+              boxShadow: "var(--shadow-sm)",
+              padding: 14,
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 14,
+              alignItems: "center",
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={{ fontWeight: 900, color: "rgba(17, 24, 39, 0.92)" }}>TestPlan header mapping</div>
+              <div style={{ fontSize: 13, color: "rgba(17, 24, 39, 0.72)", lineHeight: 1.45, maxWidth: 680 }}>
+                If your Excel/CSV headers are unusual (multi-row headers, merged header cells, localized variants), you can
+                map the Name/Project columns during import. The last choice is stored in localStorage.
+              </div>
+              <div style={{ fontSize: 12, color: "rgba(17, 24, 39, 0.62)", fontWeight: 800 }}>
+                Current mapping: {mappingText}
+              </div>
+              <div style={{ fontSize: 12, color: "rgba(17, 24, 39, 0.55)" }}>
+                Storage key: <span style={{ fontWeight: 900 }}>{TESTPLAN_MAPPING_STORAGE_KEY}</span>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  clearMapping();
+                  setMapping(null);
+                }}
+              >
+                Reset TestPlan header mapping
+              </Button>
+            </div>
+          </div>
 
           <div
             style={{

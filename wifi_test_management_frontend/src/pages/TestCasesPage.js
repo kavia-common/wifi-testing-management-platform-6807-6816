@@ -14,7 +14,7 @@ import {
   isMockImportEnabled,
   subscribeToMockImportChanges,
 } from "../utils/mockImportSettings";
-import { parseTestPlanFile } from "../utils/testPlanParser";
+import { parseTestPlanFile, TESTPLAN_MAPPING_STORAGE_KEY } from "../utils/testPlanParser";
 import { fetchArrayBufferFromUrl } from "../utils/assetLoader";
 
 function getProjectName(projects, projectId) {
@@ -102,6 +102,37 @@ function SelectField({ id, label, value, onChange, options, helperText }) {
   );
 }
 
+function readStoredMapping() {
+  try {
+    const raw = window?.localStorage?.getItem(TESTPLAN_MAPPING_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return {
+      name: typeof parsed.name === "string" ? parsed.name : "",
+      project: typeof parsed.project === "string" ? parsed.project : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredMapping(mapping) {
+  try {
+    window?.localStorage?.setItem(TESTPLAN_MAPPING_STORAGE_KEY, JSON.stringify(mapping || {}));
+  } catch {
+    // ignore
+  }
+}
+
+function clearStoredMapping() {
+  try {
+    window?.localStorage?.removeItem(TESTPLAN_MAPPING_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 // PUBLIC_INTERFACE
 export default function TestCasesPage() {
   /** Test cases list screen: search + filter + create/edit modal (API-backed with mock fallback). */
@@ -143,10 +174,13 @@ export default function TestCasesPage() {
   const [assetUrl, setAssetUrl] = useState("");
   const [assetLoading, setAssetLoading] = useState(false);
 
-  // Reactive mock-import detection:
-  // - reads on mount from localStorage (including legacy keys)
-  // - listens for storage changes (cross-tab) and in-tab broadcast events
-  // - also includes env fallback (REACT_APP_USE_MOCKS === 'true' => enabled)
+  // Manual mapping UI state
+  const [mappingModalOpen, setMappingModalOpen] = useState(false);
+  const [mappingCandidates, setMappingCandidates] = useState([]);
+  const [mappingDraft, setMappingDraft] = useState(() => readStoredMapping() || { name: "", project: "" });
+  const pendingImportRef = useRef(null); // { file, sourceLabel: string }
+
+  // Reactive mock-import detection
   const [mockImportEnabled, setMockImportEnabledState] = useState(isMockImportEnabled());
   const [mockImportDebug, setMockImportDebug] = useState(getMockImportDebugInfo());
 
@@ -159,7 +193,6 @@ export default function TestCasesPage() {
     refresh();
     const unsubscribe = subscribeToMockImportChanges(refresh);
 
-    // Also refresh on focus (common case: user toggles in another tab/app then returns).
     const onFocus = () => refresh();
     window.addEventListener("focus", onFocus);
 
@@ -178,19 +211,9 @@ export default function TestCasesPage() {
     }, ttlMs);
   }
 
-  /**
-   * Unified gating:
-   * - If mock-import flag is enabled => allow imports regardless of API/mock mode.
-   *   (Requested: "Do not block enabling due to API mode when mock-import flag is true.")
-   * - If mock-import flag is disabled => block and explain why.
-   *
-   * NOTE: Some APIs may still be mock-only behind the scenes; in that case, errors will be shown on attempt.
-   */
   function getImportUnavailableReason() {
     if (mockImportEnabled) return "";
 
-    // Disabled only when setting is OFF (or explicitly disabled via localStorage).
-    // Provide the most actionable message.
     const envFallback = String(process.env.REACT_APP_USE_MOCKS ?? "").trim().toLowerCase() === "true";
     if (envFallback) {
       return "Mock imports appear disabled via local settings (localStorage) even though REACT_APP_USE_MOCKS=true. Re-enable “Use mock TestPlan imports” in Settings.";
@@ -219,6 +242,92 @@ export default function TestCasesPage() {
     return lastSlash === -1 ? clean : clean.slice(lastSlash + 1);
   }
 
+  async function refreshListAfterImport() {
+    const latest = await testCasesApi.list();
+    setTestCases(Array.isArray(latest) ? latest : []);
+  }
+
+  function openMappingModal({ candidates, file, sourceLabel }) {
+    pendingImportRef.current = { file, sourceLabel };
+    setMappingCandidates(Array.isArray(candidates) ? candidates : []);
+    const stored = readStoredMapping();
+    setMappingDraft(stored || { name: "", project: "" });
+    setMappingModalOpen(true);
+  }
+
+  async function runImport({ file, mapping, sourceLabel }) {
+    const storedMapping = mapping || readStoredMapping() || null;
+    const mappingApplied = storedMapping?.name || storedMapping?.project ? storedMapping : null;
+
+    const parsed = await parseTestPlanFile(file, {
+      defaultProjectId: projects?.[0]?.id || "",
+      mapping: mappingApplied || undefined,
+      allowInteractiveMapping: true,
+    });
+
+    if (parsed?.needsMapping) {
+      openMappingModal({
+        candidates: parsed?.summary?.candidateHeaders || [],
+        file,
+        sourceLabel,
+      });
+      pushToast({
+        variant: "info",
+        title: "Header mapping needed",
+        message:
+          `${parsed?.message || "Missing required headers."} ` +
+          "Tip: You can choose columns in the mapping dialog.",
+        ttlMs: 8000,
+      });
+      return;
+    }
+
+    if (!parsed?.ok) {
+      throw new Error(parsed?.message || "Unable to parse TestPlan.");
+    }
+
+    const { items, warnings, summary } = parsed;
+
+    if (summary) {
+      pushToast({
+        variant: summary.skippedRows > 0 ? "info" : "success",
+        title: "Import summary",
+        message: `Imported ${summary.importedRows}. Skipped ${summary.skippedRows} (blank ${summary.blankRows}). ${
+          mappingApplied ? "Custom mapping applied." : "Auto-mapping used."
+        }`,
+        ttlMs: 7500,
+      });
+    }
+
+    if (warnings?.length) {
+      for (const w of warnings) {
+        pushToast({ variant: "info", title: "Import note", message: w, ttlMs: 6200 });
+      }
+    }
+
+    const res = await testCasesApi.importTestPlan(items);
+
+    pushToast({
+      variant: "success",
+      title: "TestPlan imported",
+      message: `Added ${res.added}, updated ${res.updated}, skipped ${res.skipped}. ${
+        mappingApplied ? `Mapping: Name=${mappingApplied.name || "(auto)"}, Project=${mappingApplied.project || "(auto)"}.` : ""
+      }`,
+      ttlMs: 6500,
+    });
+
+    await refreshListAfterImport();
+
+    if (sourceLabel) {
+      pushToast({
+        variant: "info",
+        title: "Import source",
+        message: `Imported from: ${sourceLabel}`,
+        ttlMs: 4200,
+      });
+    }
+  }
+
   async function handleImportFromAssetUrl() {
     const reason = getImportUnavailableReason();
     if (reason) {
@@ -243,43 +352,12 @@ export default function TestCasesPage() {
         throw new Error("Unsupported asset type. Please provide an Excel .xlsx TestPlan URL.");
       }
 
-      // Route through the existing parser by creating a File, so we reuse the exact pipeline.
       const file = new File([arrayBuffer], nameHint.endsWith(".xlsx") ? nameHint : `${nameHint}.xlsx`, {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       });
 
-      const { items, warnings, summary } = await parseTestPlanFile(file, {
-        defaultProjectId: projects?.[0]?.id || "",
-      });
-
-      // Show a compact summary first (headers + skip counts), then any additional notes.
-      if (summary) {
-        pushToast({
-          variant: summary.skippedRows > 0 ? "info" : "success",
-          title: "Import summary",
-          message: `Imported ${summary.importedRows}. Skipped ${summary.skippedRows} (blank ${summary.blankRows}). Missing headers: ${
-            summary.missingHeaders?.length ? summary.missingHeaders.join(", ") : "none"
-          }.`,
-          ttlMs: 7000,
-        });
-      }
-
-      if (warnings?.length) {
-        for (const w of warnings) {
-          pushToast({ variant: "info", title: "Import note", message: w, ttlMs: 6200 });
-        }
-      }
-
-      const res = await testCasesApi.importTestPlan(items);
-
-      pushToast({
-        variant: "success",
-        title: "TestPlan imported",
-        message: `Added ${res.added}, updated ${res.updated}, skipped ${res.skipped}.`,
-      });
-
+      await runImport({ file, sourceLabel: url });
       setAssetImportOpen(false);
-      await refreshListAfterImport();
     } catch (e) {
       pushToast({
         variant: "error",
@@ -287,7 +365,7 @@ export default function TestCasesPage() {
         message:
           e?.message ||
           "Unable to import asset. Ensure it is a publicly accessible Excel .xlsx TestPlan URL (mock imports enabled).",
-        ttlMs: 8000,
+        ttlMs: 9000,
       });
     } finally {
       setAssetLoading(false);
@@ -420,7 +498,6 @@ export default function TestCasesPage() {
   }
 
   async function handleSave(formValues) {
-    // Normalize here as well to keep list consistent, even if modal normalized.
     const normalized = {
       ...formValues,
       tags: normalizeTagsFromString(formValues.tags),
@@ -435,7 +512,6 @@ export default function TestCasesPage() {
         return;
       }
 
-      // Create: ensure usage exists (mock helper gives nice non-empty details)
       const payload = {
         ...normalized,
         usage: normalized.usage || deriveUsageForNewTestCase(),
@@ -444,7 +520,6 @@ export default function TestCasesPage() {
 
       setTestCases((prev) => [created, ...prev]);
 
-      // Best-effort: update project counts in UI cache if mocks are on (mock store already does it)
       if (isMockModeEnabled()) {
         setProjects((prev) =>
           prev.map((p) => {
@@ -470,11 +545,6 @@ export default function TestCasesPage() {
     }
   }
 
-  async function refreshListAfterImport() {
-    const latest = await testCasesApi.list();
-    setTestCases(Array.isArray(latest) ? latest : []);
-  }
-
   async function handleImportFileSelected(file) {
     if (!file) return;
 
@@ -490,52 +560,24 @@ export default function TestCasesPage() {
 
     setImporting(true);
     try {
-      const { items, warnings, summary } = await parseTestPlanFile(file, {
-        defaultProjectId: projects?.[0]?.id || "",
-      });
-
-      if (summary) {
-        pushToast({
-          variant: summary.skippedRows > 0 ? "info" : "success",
-          title: "Import summary",
-          message: `Imported ${summary.importedRows}. Skipped ${summary.skippedRows} (blank ${summary.blankRows}). Missing headers: ${
-            summary.missingHeaders?.length ? summary.missingHeaders.join(", ") : "none"
-          }.`,
-          ttlMs: 7000,
-        });
-      }
-
-      if (warnings?.length) {
-        for (const w of warnings) {
-          pushToast({ variant: "info", title: "Import note", message: w, ttlMs: 6200 });
-        }
-      }
-
-      const res = await testCasesApi.importTestPlan(items);
-
-      pushToast({
-        variant: "success",
-        title: "TestPlan imported",
-        message: `Added ${res.added}, updated ${res.updated}, skipped ${res.skipped}.`,
-      });
-
-      await refreshListAfterImport();
+      await runImport({ file, sourceLabel: file?.name || "Local file" });
     } catch (e) {
       const rawMsg =
         e?.message ||
         "Unable to import file. Ensure it contains required columns/values for Name and Project (supports Excel .xlsx).";
 
-      // Make the toast more actionable: users typically need to fix headers.
       const looksLikeHeaderIssue =
-        /missing headers|could not find any values for name|could not find any values for project|required columns/i.test(rawMsg);
+        /missing required|header|could not find any values for name|could not find any values for project|required columns/i.test(
+          rawMsg
+        );
 
       pushToast({
         variant: "error",
         title: looksLikeHeaderIssue ? "Import failed: header mismatch" : "Import failed (TestPlan)",
         message: looksLikeHeaderIssue
-          ? `${rawMsg} Tip: Confirm the header row contains “Test Case Name” and “Project/Project Name” (or Chinese equivalents like 用例名称/项目).`
+          ? `${rawMsg} Hint: you can choose the Name/Project columns in the mapping dialog.`
           : rawMsg,
-        ttlMs: 10000,
+        ttlMs: 11000,
       });
     } finally {
       setImporting(false);
@@ -545,6 +587,79 @@ export default function TestCasesPage() {
 
   const importDisabledReason = getImportUnavailableReason();
   const importButtonsDisabled = loading || importing || assetLoading || Boolean(importDisabledReason);
+
+  const mappingFooter = (
+    <div style={{ display: "flex", gap: 10, justifyContent: "space-between", flexWrap: "wrap", width: "100%" }}>
+      <Button
+        variant="ghost"
+        onClick={() => {
+          clearStoredMapping();
+          setMappingDraft({ name: "", project: "" });
+          pushToast({ variant: "info", title: "Mapping cleared", message: "TestPlan header mapping has been reset." });
+        }}
+      >
+        Reset mapping
+      </Button>
+
+      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
+        <Button variant="ghost" onClick={() => setMappingModalOpen(false)}>
+          Cancel
+        </Button>
+        <Button
+          variant="primary"
+          onClick={async () => {
+            const nameCol = String(mappingDraft?.name || "").trim();
+            const projectCol = String(mappingDraft?.project || "").trim();
+
+            if (!nameCol || !projectCol) {
+              pushToast({
+                variant: "error",
+                title: "Missing mapping",
+                message: "Please select both Name and Project columns (or reset mapping).",
+              });
+              return;
+            }
+
+            writeStoredMapping({ name: nameCol, project: projectCol });
+            pushToast({
+              variant: "success",
+              title: "Using custom header mapping",
+              message: `Name=${nameCol}, Project=${projectCol}`,
+              ttlMs: 6000,
+            });
+
+            const pending = pendingImportRef.current;
+            setMappingModalOpen(false);
+
+            if (pending?.file) {
+              setImporting(true);
+              try {
+                await runImport({
+                  file: pending.file,
+                  mapping: { name: nameCol, project: projectCol },
+                  sourceLabel: pending.sourceLabel,
+                });
+              } catch (e) {
+                pushToast({
+                  variant: "error",
+                  title: "Import failed after mapping",
+                  message:
+                    e?.message ||
+                    "Import failed even after applying mapping. Please verify the selected columns contain values.",
+                  ttlMs: 10000,
+                });
+              } finally {
+                setImporting(false);
+              }
+            }
+          }}
+          disabled={importing || assetLoading}
+        >
+          Apply mapping & import
+        </Button>
+      </div>
+    </div>
+  );
 
   return (
     <div className="page">
@@ -651,12 +766,11 @@ export default function TestCasesPage() {
               </div>
             ) : (
               <div style={{ fontSize: 13, color: "rgba(17, 24, 39, 0.72)", lineHeight: 1.45 }}>
-                Imports enabled (listening for Settings/localStorage changes).
+                Imports enabled. If headers are not detected, you can map Name/Project columns manually.
               </div>
             )}
           </div>
 
-          {/* Debug-ish detail, but still user-friendly: helps verify which flag is being read */}
           <div style={{ marginTop: 10, fontSize: 12, color: "rgba(17, 24, 39, 0.62)", lineHeight: 1.45 }}>
             <span style={{ fontWeight: 900 }}>Mock-import flag source:</span>{" "}
             {mockImportDebug?.primaryRawValue == null ? "default/env" : `localStorage="${mockImportDebug.primaryRawValue}"`}{" "}
@@ -764,6 +878,102 @@ export default function TestCasesPage() {
           <div style={{ fontSize: 12, color: "rgba(17, 24, 39, 0.62)", marginTop: 10, lineHeight: 1.45 }}>
             Supported format: Excel <span style={{ fontWeight: 900 }}>.xlsx</span>. If the URL cannot be fetched due to
             CORS restrictions, download the file locally and use “Import TestPlan”.
+          </div>
+        </Modal>
+
+        <Modal
+          open={mappingModalOpen}
+          size="sm"
+          title="Map TestPlan headers"
+          description="Auto-detection could not confidently find Name/Project. Select the correct columns and re-run import."
+          onClose={() => setMappingModalOpen(false)}
+          footer={mappingFooter}
+        >
+          <div style={{ display: "grid", gap: 12 }}>
+            <div style={{ fontSize: 12, color: "rgba(17, 24, 39, 0.7)", lineHeight: 1.45 }}>
+              This is helpful when your Excel file has multi-row headers (e.g. “Project” + “(项目)”) or merged header cells.
+            </div>
+
+            <div style={{ display: "grid", gap: 10 }}>
+              <div className="uiField">
+                <label className="uiField__label" htmlFor="mapping-name">
+                  Name column (用例名称)
+                </label>
+                <div
+                  style={{
+                    borderRadius: 12,
+                    border: "1px solid var(--color-border)",
+                    background: "rgba(255, 255, 255, 0.9)",
+                    padding: "10px 12px",
+                    boxShadow: "var(--shadow-sm)",
+                  }}
+                >
+                  <select
+                    id="mapping-name"
+                    value={mappingDraft?.name || ""}
+                    onChange={(e) => setMappingDraft((p) => ({ ...(p || {}), name: e.target.value }))}
+                    style={{
+                      width: "100%",
+                      border: "none",
+                      outline: "none",
+                      background: "transparent",
+                      fontSize: 14,
+                      fontWeight: 800,
+                      color: "rgba(17, 24, 39, 0.88)",
+                    }}
+                  >
+                    <option value="">— Select —</option>
+                    {mappingCandidates.map((h) => (
+                      <option key={`n-${h}`} value={h}>
+                        {h}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="uiField">
+                <label className="uiField__label" htmlFor="mapping-project">
+                  Project column (项目/專案/产品线)
+                </label>
+                <div
+                  style={{
+                    borderRadius: 12,
+                    border: "1px solid var(--color-border)",
+                    background: "rgba(255, 255, 255, 0.9)",
+                    padding: "10px 12px",
+                    boxShadow: "var(--shadow-sm)",
+                  }}
+                >
+                  <select
+                    id="mapping-project"
+                    value={mappingDraft?.project || ""}
+                    onChange={(e) => setMappingDraft((p) => ({ ...(p || {}), project: e.target.value }))}
+                    style={{
+                      width: "100%",
+                      border: "none",
+                      outline: "none",
+                      background: "transparent",
+                      fontSize: 14,
+                      fontWeight: 800,
+                      color: "rgba(17, 24, 39, 0.88)",
+                    }}
+                  >
+                    <option value="">— Select —</option>
+                    {mappingCandidates.map((h) => (
+                      <option key={`p-${h}`} value={h}>
+                        {h}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ fontSize: 12, color: "rgba(17, 24, 39, 0.62)", lineHeight: 1.45 }}>
+                Mapping is saved in localStorage (<span style={{ fontWeight: 900 }}>{TESTPLAN_MAPPING_STORAGE_KEY}</span>) and
+                can be reset here or in Settings.
+              </div>
+            </div>
           </div>
         </Modal>
       </div>

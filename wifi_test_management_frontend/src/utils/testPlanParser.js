@@ -6,14 +6,22 @@ import { normalizeParametersList, normalizeTagsFromString } from "../pages/testC
  * Parser for TestPlan imports (CSV/XLSX/JSON) that normalizes rows into the app TestCase shape.
  *
  * Key goals:
- * - Robust XLSX parsing (sheet selection heuristics, empty row handling).
+ * - Robust XLSX parsing (sheet selection heuristics, multi-row / merged headers, empty row handling).
  * - Header normalization + tolerant mapping for common WiFi test plan columns (including localized headers).
- * - Clear, actionable error messages when required fields are missing.
+ * - Clear, actionable guidance when required fields are missing.
  * - Row-level validation: skip blank rows; skip invalid rows but still import valid ones.
+ *
+ * IMPORTANT:
+ * - When required columns (Name/Project) cannot be auto-detected, this parser can return a structured
+ *   response indicating that interactive mapping is needed (instead of throwing), so UI can present
+ *   a manual mapping dialog and re-run parsing with the chosen mapping.
  */
 
 /** Max rows to import for safety (avoid locking UI on huge files). */
 const MAX_ROWS = 2000;
+
+/** localStorage key used by UI; parser accepts it as an override when passed in. */
+export const TESTPLAN_MAPPING_STORAGE_KEY = "wifi.testplan.mapping";
 
 function nowIso() {
   return new Date().toISOString();
@@ -44,13 +52,17 @@ function toHalfWidthAscii(s) {
 }
 
 /**
- * Normalize headers to a comparison key:
+ * Normalize header into a tolerant comparison key:
  * - Trim
- * - Case-insensitive
+ * - Case-insensitive for English
  * - Remove BOM and zero-width characters
  * - Fullwidth -> halfwidth for ASCII-ish characters
- * - Remove whitespace, underscores, hyphens
- * - Remove common punctuation separators
+ * - Remove whitespace and common punctuation
+ * - Remove brackets/parentheses ()（）[]【】{}<>
+ * - Remove slashes and hyphens (and similar separators)
+ *
+ * Notes:
+ * - For CJK, we keep the characters but strip punctuation surrounding them.
  */
 function normalizeHeaderKey(k) {
   return toHalfWidthAscii(toStringSafe(k))
@@ -59,8 +71,11 @@ function normalizeHeaderKey(k) {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, "")
-    .replace(/[_-]+/g, "")
-    .replace(/[()\u3010\u3011[\]{}:\uFF1A/\\|.\uFF0C,;\uFF1B]/g, "");
+    .replace(
+      /[._\-—–·•,:;，；、/\\|'"“”‘’`~!@#$%^&*+=?<>]/g,
+      ""
+    )
+    .replace(/[()（）[\]【】{}《》]/g, "");
 }
 
 /** Trim and turn any value into a non-empty string or "" */
@@ -141,14 +156,11 @@ const HEADER_ALIASES = {
   ].map(normalizeHeaderKey),
 
   /**
-   * Project column is often inconsistent across orgs:
-   * - Project / 项目 / 專案 / 項目
-   * - "Project Name"
-   * - "产品/产品线" sometimes used to indicate project/product line
-   *
-   * Added: exact variants found in the WiFi Function TestPlan.xlsx header row screenshot.
+   * Project column is often inconsistent across orgs.
+   * Expanded per user request to include many variants and tolerate punctuation/whitespace/brackets.
    */
   project: [
+    // Existing-ish
     "projectid",
     "project",
     "projectname",
@@ -157,30 +169,42 @@ const HEADER_ALIASES = {
     "plan",
     "planname",
 
-    // Exact/common WiFi Function TestPlan variants
+    // Requested aliases (including CJK)
+    "项目",
+    "專案",
+    "項目",
+    "产品线",
+    "產品線",
+    "Project",
+    "Project Name",
+    "Project/项目",
+    "Project（项目）",
+    "專案名稱",
+    "项目名称",
+    "Test Project",
+    "Product Line",
+    "产品線",
+    "Proj",
+    "專案/Project",
+    "Project_name",
+
+    // Extra common combined variants still seen in older templates
     "Project/Project Name",
     "Project / Project Name",
     "Project（Project Name）",
     "Project(Project Name)",
 
-    // Chinese simplified
-    "项目",
-    "项目名称",
+    // Other CN variants previously supported
     "所属项目",
     "工程",
     "工程名称",
     "产品",
     "产品名称",
-    "产品线",
     "產品",
     "產品名稱",
     "產品線",
-    // Chinese traditional
-    "專案",
     "專案名稱",
-    "項目",
     "項目名稱",
-    // Slash-style headers commonly seen in templates
     "产品/产品线",
     "產品/產品線",
   ].map(normalizeHeaderKey),
@@ -265,7 +289,6 @@ const HEADER_ALIASES = {
     "tags",
     "tag",
     "labels",
-    // some plans store category-ish content in tags-like columns
     "label",
     // Chinese
     "标签",
@@ -386,74 +409,6 @@ function parseCsv(text) {
   return rows;
 }
 
-/**
- * Choose a sheet:
- * - Prefer sheet names that look like actual case tables: "test", "case", "plan", "用例", "测试"
- * - Otherwise choose the sheet with the most non-empty rows.
- */
-function chooseBestSheet(workbook) {
-  const names = workbook.SheetNames || [];
-  if (!names.length) return "";
-
-  const scoreName = (n) => {
-    const s = String(n).toLowerCase();
-    const hits = [
-      "test",
-      "case",
-      "plan",
-      "suite",
-      "tc",
-      "用例",
-      "测试",
-      "測試",
-      "测试用例",
-      "測試用例",
-      "计划",
-      "計劃",
-      "功能",
-    ].some((w) => s.includes(w));
-    return hits ? 10 : 0;
-  };
-
-  let best = names[0];
-  let bestScore = -Infinity;
-
-  for (const name of names) {
-    const sheet = workbook.Sheets?.[name];
-    if (!sheet) continue;
-
-    // Use raw array-of-arrays to quickly count rows that contain any value.
-    const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false, defval: "" });
-    const nonEmptyRowCount = (aoa || []).filter((r) => Array.isArray(r) && r.some((c) => strTrim(c))).length;
-
-    const score = scoreName(name) + Math.min(nonEmptyRowCount, 500) / 50; // small tie-breaker
-    if (score > bestScore) {
-      bestScore = score;
-      best = name;
-    }
-  }
-  return best;
-}
-
-function parseXlsx(arrayBuffer) {
-  // cellDates: keep dates (if any) as Date objects; we eventually stringify
-  const workbook = XLSX.read(arrayBuffer, { type: "array", cellDates: true });
-
-  const sheetName = chooseBestSheet(workbook);
-  if (!sheetName) throw new Error("XLSX file has no sheets");
-
-  const sheet = workbook.Sheets[sheetName];
-  if (!sheet) throw new Error("Unable to read XLSX sheet");
-
-  // defval: preserve columns even if empty; blankrows: false to avoid extra empty objects
-  let rows = XLSX.utils.sheet_to_json(sheet, { defval: "", blankrows: false });
-
-  // Remove fully empty rows (common in exported sheets)
-  rows = (Array.isArray(rows) ? rows : []).filter((r) => !isRowEmpty(r));
-
-  return rows;
-}
-
 function parseJson(text) {
   let parsed;
   try {
@@ -488,40 +443,81 @@ function inferKindFromFile(file) {
 }
 
 /**
- * Attempt to find a field value by trying:
- * - explicit mapping overrides
- * - alias list matching
- * - direct key match
+ * Expand merged header cells (XLSX only) by propagating the merged top-left value
+ * across all covered cells in the merge range.
  */
-function getFieldValue(normalizedRow, { field, mapping }) {
-  const mappingKey = mapping?.[field] ? normalizeHeaderKey(mapping[field]) : "";
-  if (mappingKey && mappingKey in normalizedRow) return normalizedRow[mappingKey];
+function applyMergesToAoaHeaders(aoa, merges) {
+  if (!Array.isArray(aoa) || !Array.isArray(merges) || merges.length === 0) return aoa;
 
-  const aliases = HEADER_ALIASES[field] || [];
-  const hit = firstNonEmpty(normalizedRow, aliases);
-  if (hit) return hit;
+  const out = aoa.map((r) => (Array.isArray(r) ? [...r] : []));
+  for (const m of merges) {
+    const s = m?.s;
+    const e = m?.e;
+    if (!s || !e) continue;
 
-  // Also accept direct normalized field name if present.
-  const direct = strTrim(normalizedRow?.[normalizeHeaderKey(field)]);
-  if (direct) return direct;
+    const v = out?.[s.r]?.[s.c];
+    if (v == null || strTrim(v) === "") continue;
 
-  return "";
+    for (let r = s.r; r <= e.r; r += 1) {
+      if (!out[r]) out[r] = [];
+      for (let c = s.c; c <= e.c; c += 1) {
+        if (out[r][c] == null || strTrim(out[r][c]) === "") {
+          out[r][c] = v;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function rowLooksLikeHeaderFragment(row) {
+  if (!Array.isArray(row)) return false;
+  const nonEmpty = row.map((c) => strTrim(c)).filter(Boolean);
+  if (nonEmpty.length === 0) return false;
+
+  // Heuristic: header rows typically have short-ish tokens, not long sentences.
+  const avgLen =
+    nonEmpty.reduce((sum, s) => sum + String(s).length, 0) / Math.max(1, nonEmpty.length);
+
+  return avgLen <= 28;
+}
+
+function concatVerticalHeaderFragments(headerRows, colCount) {
+  const headers = [];
+  for (let c = 0; c < colCount; c += 1) {
+    const parts = [];
+    for (const r of headerRows) {
+      const v = strTrim(r?.[c]);
+      if (v) parts.push(v);
+    }
+    headers[c] = parts.join("");
+  }
+  return headers;
+}
+
+function aoaToObjects(aoa, headers, startRowIdx) {
+  const out = [];
+  for (let r = startRowIdx; r < aoa.length; r += 1) {
+    const row = aoa[r];
+    if (!Array.isArray(row)) continue;
+
+    const obj = {};
+    for (let c = 0; c < headers.length; c += 1) {
+      const h = headers[c] != null ? String(headers[c]) : "";
+      if (!h) continue;
+      obj[h] = row[c] == null ? "" : row[c];
+    }
+    out.push(obj);
+  }
+  return out;
 }
 
 /**
  * Determine which canonical fields appear to be present in the file headers.
  * We look at *header keys* (not row values) so users can understand mapping issues quickly.
  */
-function detectHeaderPresence(rows, { mapping } = {}) {
-  const presentKeys = new Set();
-
-  // Add normalized keys seen in headers across rows
-  for (const row of rows || []) {
-    for (const k of Object.keys(row || {})) {
-      const nk = normalizeHeaderKey(k);
-      if (nk) presentKeys.add(nk);
-    }
-  }
+function detectHeaderPresenceFromHeaderList(headerList, { mapping } = {}) {
+  const presentKeys = new Set((headerList || []).map((h) => normalizeHeaderKey(h)).filter(Boolean));
 
   // If user provided explicit mapping overrides, treat those as "present" too (if they exist in keys)
   const mapped = {};
@@ -544,18 +540,70 @@ function detectHeaderPresence(rows, { mapping } = {}) {
       (presentKeys.has(normalizeHeaderKey(field)) ? normalizeHeaderKey(field) : "");
 
     if (hit) detected[field] = hit;
-    else missing[field] = aliasKeys.slice(0, 6); // short list for display
+    else missing[field] = aliasKeys.slice(0, 10); // short list for display
+  }
+
+  return { presentKeys, detected, missing };
+}
+
+function detectHeaderPresence(rows, { mapping } = {}) {
+  const presentKeys = new Set();
+
+  // Add normalized keys seen in headers across rows
+  for (const row of rows || []) {
+    for (const k of Object.keys(row || {})) {
+      const nk = normalizeHeaderKey(k);
+      if (nk) presentKeys.add(nk);
+    }
+  }
+
+  const canonicalFields = Object.keys(HEADER_ALIASES);
+  const detected = {};
+  const missing = {};
+
+  for (const field of canonicalFields) {
+    const mk = mapping?.[field] ? normalizeHeaderKey(mapping[field]) : "";
+    const aliasKeys = HEADER_ALIASES[field] || [];
+
+    const hit =
+      (mk && presentKeys.has(mk) && mk) ||
+      aliasKeys.find((k) => presentKeys.has(k)) ||
+      (presentKeys.has(normalizeHeaderKey(field)) ? normalizeHeaderKey(field) : "");
+
+    if (hit) detected[field] = hit;
+    else missing[field] = aliasKeys.slice(0, 10);
   }
 
   return { presentKeys, detected, missing };
 }
 
 function buildRequiredColumnsHelp() {
-  // Keep this simple and user-facing; it shows typical headers we can read.
   return [
-    "Required columns: Name (用例名称) and Project (项目).",
-    "Optional columns: ID (编号), Description/Steps (描述/步骤), Parameters (参数), ExpectedResult (预期结果), Tags (标签), Category (分类), Priority (优先级).",
+    "Required columns: Name (用例名称) and Project (项目/專案/項目/产品线).",
+    "If your sheet uses a two-row header (e.g., Project + (项目)) or merged header cells, import should still work.",
+    "If auto-detection fails, use the column mapping dialog to select the correct columns.",
   ].join(" ");
+}
+
+/**
+ * Attempt to find a field value by trying:
+ * - explicit mapping overrides
+ * - alias list matching
+ * - direct key match
+ */
+function getFieldValue(normalizedRow, { field, mapping }) {
+  const mappingKey = mapping?.[field] ? normalizeHeaderKey(mapping[field]) : "";
+  if (mappingKey && mappingKey in normalizedRow) return normalizedRow[mappingKey];
+
+  const aliases = HEADER_ALIASES[field] || [];
+  const hit = firstNonEmpty(normalizedRow, aliases);
+  if (hit) return hit;
+
+  // Also accept direct normalized field name if present.
+  const direct = strTrim(normalizedRow?.[normalizeHeaderKey(field)]);
+  if (direct) return direct;
+
+  return "";
 }
 
 /**
@@ -590,7 +638,7 @@ function rowToTestCaseValidated(row, { defaultProjectId, mapping } = {}) {
   const tagsRaw = getFieldValue(r, { field: "tags", mapping }) || r.tags;
   const tags = parseTagsAny(tagsRaw);
 
-  // Category / priority: add as tags so we don't lose info (since core TestCase shape doesn't have these fields)
+  // Category / priority: add as tags so we don't lose info
   const category = strTrim(getFieldValue(r, { field: "category", mapping }));
   const priority = strTrim(getFieldValue(r, { field: "priority", mapping }));
   const extraTags = [];
@@ -617,13 +665,18 @@ function rowToTestCaseValidated(row, { defaultProjectId, mapping } = {}) {
   };
 }
 
-/**
- * Validate the *file-level* presence of required columns/values.
- *
- * Important: We do NOT fail the entire import just because some rows are missing Project.
- * We only throw if we can't find any plausible Name/Project values at all (i.e., header mapping likely wrong),
- * and no defaultProjectId fallback is provided.
- */
+function getHeaderCandidates(rows) {
+  const seen = new Map(); // normalizedKey -> original header string
+  for (const row of rows || []) {
+    for (const k of Object.keys(row || {})) {
+      const nk = normalizeHeaderKey(k);
+      if (!nk) continue;
+      if (!seen.has(nk)) seen.set(nk, String(k));
+    }
+  }
+  return Array.from(seen.values());
+}
+
 function validateFileLevel(rows, { defaultProjectId, mapping } = {}) {
   const issues = [];
   let hasAnyName = false;
@@ -640,35 +693,134 @@ function validateFileLevel(rows, { defaultProjectId, mapping } = {}) {
     if (hasAnyName && hasAnyProject) break;
   }
 
-  // If we can't find any name at all, we should fail early: likely wrong header.
   if (!hasAnyName) issues.push("Could not find any values for Name (用例名称). Check the header row/aliases.");
-
-  // If no defaultProjectId is provided AND we never see any project values, likely wrong header.
   if (!hasAnyProject) issues.push("Could not find any values for Project (项目/專案/項目/产品线). Check the header row/aliases.");
 
   return issues;
 }
 
+/**
+ * Decide whether a sheet seems to contain required columns by scanning its first few header rows
+ * and looking for any alias tokens for required fields.
+ */
+function sheetHasAnyRequiredAlias(sheet) {
+  const aoaRaw = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false, defval: "" });
+  const merges = sheet?.["!merges"] || [];
+  const aoa = applyMergesToAoaHeaders(aoaRaw, merges);
+
+  const firstRows = (aoa || []).slice(0, 3);
+  const flattened = firstRows.flatMap((r) => (Array.isArray(r) ? r : [])).map((c) => normalizeHeaderKey(c));
+
+  const requiredAliases = new Set([...(HEADER_ALIASES.name || []), ...(HEADER_ALIASES.project || [])]);
+  return flattened.some((k) => requiredAliases.has(k));
+}
+
+/**
+ * Choose a sheet:
+ * - If multiple sheets exist, prefer the first sheet that contains any required alias token in its top header area.
+ * - Otherwise fall back to first sheet.
+ */
+function chooseBestSheet(workbook) {
+  const names = workbook.SheetNames || [];
+  if (!names.length) return "";
+
+  if (names.length > 1) {
+    for (const name of names) {
+      const sheet = workbook.Sheets?.[name];
+      if (!sheet) continue;
+      if (sheetHasAnyRequiredAlias(sheet)) return name;
+    }
+  }
+
+  return names[0];
+}
+
+/**
+ * Parse XLSX with support for:
+ * - merged header cells (!merges)
+ * - multi-row header fragments (top 2-3 rows) concatenated per column
+ */
+function parseXlsx(arrayBuffer) {
+  const workbook = XLSX.read(arrayBuffer, { type: "array", cellDates: true });
+
+  const sheetName = chooseBestSheet(workbook);
+  if (!sheetName) throw new Error("XLSX file has no sheets");
+
+  const sheet = workbook.Sheets[sheetName];
+  if (!sheet) throw new Error("Unable to read XLSX sheet");
+
+  const aoaRaw = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false, defval: "" });
+  const merges = sheet?.["!merges"] || [];
+  const aoa = applyMergesToAoaHeaders(aoaRaw, merges);
+
+  const firstRows = (aoa || []).slice(0, 3);
+  const candidateHeaderRows = [];
+
+  for (let i = 0; i < firstRows.length; i += 1) {
+    const row = firstRows[i];
+    if (!Array.isArray(row)) continue;
+    if (rowLooksLikeHeaderFragment(row)) candidateHeaderRows.push(row);
+    else break;
+  }
+
+  const headerRowCount = Math.min(Math.max(candidateHeaderRows.length, 1), 3);
+  const headerRows = (aoa || []).slice(0, headerRowCount);
+
+  const colCount = Math.max(
+    0,
+    ...(headerRows || []).map((r) => (Array.isArray(r) ? r.length : 0))
+  );
+
+  const headers =
+    headerRowCount > 1 ? concatVerticalHeaderFragments(headerRows, colCount) : (headerRows?.[0] || []).slice(0, colCount);
+
+  let rows = aoaToObjects(aoa || [], headers, headerRowCount);
+
+  // Remove fully empty rows
+  rows = (Array.isArray(rows) ? rows : []).filter((r) => !isRowEmpty(r));
+
+  return rows;
+}
+
 // PUBLIC_INTERFACE
-export async function parseTestPlanFile(file, { defaultProjectId, mapping } = {}) {
+export async function parseTestPlanFile(
+  file,
+  {
+    defaultProjectId,
+    mapping,
+    allowInteractiveMapping = true,
+  } = {}
+) {
   /**
    * Parses a CSV/XLSX/JSON TestPlan file into normalized TestCase-like objects.
    *
-   * Returns:
+   * Returns one of:
+   *
+   * 1) Success:
    * {
+   *   ok: true,
    *   items: TestCase[],
    *   warnings: string[],
+   *   summary: {...},
+   * }
+   *
+   * 2) Needs mapping (no throw; UI should show mapping modal and re-run with mapping):
+   * {
+   *   ok: false,
+   *   needsMapping: true,
+   *   message: string,
+   *   warnings: string[],
    *   summary: {
-   *     totalRows, blankRows, importedRows, skippedRows,
-   *     skippedMissingProject, skippedMissingName,
-   *     missingHeaders: string[],
-   *     detectedHeaders: Record<string,string>
+   *     detectedHeaders,
+   *     missingHeaders,
+   *     candidateHeaders: string[],
    *   }
    * }
    *
    * Options:
    * - defaultProjectId: if provided, rows missing Project can still import (projectId fallback).
    * - mapping: optional mapping overrides, e.g. { name: "用例名称", project: "项目" }
+   * - allowInteractiveMapping: when true and required headers are missing, return needsMapping payload.
    */
   if (!file) throw new Error("No file selected");
 
@@ -686,7 +838,6 @@ export async function parseTestPlanFile(file, { defaultProjectId, mapping } = {}
     const buf = await file.arrayBuffer();
     rows = parseXlsx(buf);
   } else {
-    // Autodetect by attempting JSON, then CSV. (XLSX cannot be reliably guessed without extension.)
     const text = await file.text();
     try {
       rows = parseJson(text);
@@ -719,22 +870,70 @@ export async function parseTestPlanFile(file, { defaultProjectId, mapping } = {}
   const requiredHeaderFields = ["name", "project"];
   const missingHeaders = requiredHeaderFields.filter((f) => !headerPresence.detected[f]);
 
-  // Add a helpful header summary note (requested: helpful toast summary listing detected/missing).
+  // Add a helpful header summary note
   const detectedPairs = Object.entries(headerPresence.detected)
     .filter(([k]) => requiredHeaderFields.includes(k))
     .map(([k, v]) => `${k}→${v}`);
+
   warnings.push(
-    `Detected headers: ${detectedPairs.length ? detectedPairs.join(", ") : "(none)"}; Missing: ${
+    `Detected required headers: ${detectedPairs.length ? detectedPairs.join(", ") : "(none)"}; Missing: ${
       missingHeaders.length ? missingHeaders.join(", ") : "(none)"
     }.`
   );
 
-  // File-level validation: avoid false "missing Project" when headers vary.
-  // Only fail if we truly can't find any values at all for required fields.
+  // If we are missing required headers, prefer returning candidates for interactive mapping.
+  if (missingHeaders.length > 0 && allowInteractiveMapping) {
+    const candidates = getHeaderCandidates(rows);
+    return {
+      ok: false,
+      needsMapping: true,
+      message:
+        `Missing required column header(s): ${missingHeaders.join(", ")}. ` +
+        "You can manually choose which columns map to Name/Project and re-run import.",
+      warnings,
+      summary: {
+        totalRows: totalRowsBefore,
+        blankRows,
+        importedRows: 0,
+        skippedRows: 0,
+        skippedMissingProject: 0,
+        skippedMissingName: 0,
+        detectedHeaders: headerPresence.detected,
+        missingHeaders,
+        candidateHeaders: candidates,
+      },
+    };
+  }
+
+  // File-level validation: only fail if we truly can't find any values at all for required fields.
   const fileLevelIssues = validateFileLevel(rows, { defaultProjectId, mapping });
   if (fileLevelIssues.length) {
     const extra = buildRequiredColumnsHelp();
-    throw new Error(`${fileLevelIssues.join(" ")} ${extra}`);
+    const msg = `${fileLevelIssues.join(" ")} ${extra}`;
+
+    // If mapping is allowed, provide candidates as well (users often have correct data but odd headers).
+    if (allowInteractiveMapping) {
+      const candidates = getHeaderCandidates(rows);
+      return {
+        ok: false,
+        needsMapping: true,
+        message: msg,
+        warnings,
+        summary: {
+          totalRows: totalRowsBefore,
+          blankRows,
+          importedRows: 0,
+          skippedRows: 0,
+          skippedMissingProject: 0,
+          skippedMissingName: 0,
+          detectedHeaders: headerPresence.detected,
+          missingHeaders: requiredHeaderFields,
+          candidateHeaders: candidates,
+        },
+      };
+    }
+
+    throw new Error(msg);
   }
 
   const items = [];
@@ -753,7 +952,6 @@ export async function parseTestPlanFile(file, { defaultProjectId, mapping } = {}
       if (res.missing.includes("Project")) skippedMissingProject += 1;
       if (res.missing.includes("Name")) skippedMissingName += 1;
 
-      // Keep a few examples to help user fix their sheet
       if (missingSamples.length < maxSamples) {
         missingSamples.push(`Row ${i + 2}: ${res.reason}`); // +2: header row is row 1 in spreadsheets
       }
@@ -784,7 +982,7 @@ export async function parseTestPlanFile(file, { defaultProjectId, mapping } = {}
     missingHeaders,
   };
 
-  return { items, warnings, summary };
+  return { ok: true, items, warnings, summary };
 }
 
 // PUBLIC_INTERFACE
@@ -802,4 +1000,20 @@ export function __private_normalizeHeaderKeyForTests(header) {
    * Not intended for production usage elsewhere.
    */
   return normalizeHeaderKey(header);
+}
+
+// PUBLIC_INTERFACE
+export function __private_applyMergesToAoaHeadersForTests(aoa, merges) {
+  /**
+   * Exposed for unit tests only (merged header propagation).
+   */
+  return applyMergesToAoaHeaders(aoa, merges);
+}
+
+// PUBLIC_INTERFACE
+export function __private_concatVerticalHeaderFragmentsForTests(headerRows, colCount) {
+  /**
+   * Exposed for unit tests only (multi-row header concatenation).
+   */
+  return concatVerticalHeaderFragments(headerRows, colCount);
 }
