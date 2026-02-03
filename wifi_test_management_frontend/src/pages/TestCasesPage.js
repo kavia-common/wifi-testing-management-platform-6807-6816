@@ -369,9 +369,11 @@ export default function TestCasesPage() {
     } catch (e) {
       pushToast({
         variant: "error",
-        title: "Import failed",
-        message: e?.message || "Unable to import file. Please check format and required columns.",
-        ttlMs: 7000,
+        title: "Import failed (TestPlan)",
+        message:
+          e?.message ||
+          "Unable to import file. Ensure it contains required columns/values for Name and Project (supports Excel .xlsx).",
+        ttlMs: 8000,
       });
     } finally {
       setImporting(false);
@@ -387,7 +389,8 @@ export default function TestCasesPage() {
           <div>
             <h1 className="page__title">Test Cases</h1>
             <p className="page__subtitle">
-              Manage your test case library with project associations, searchable tags, and runtime parameters.
+              Manage your test case library with project associations, searchable tags, and runtime parameters. Import
+              TestPlans from CSV, Excel (.xlsx), or JSON.
             </p>
           </div>
 
