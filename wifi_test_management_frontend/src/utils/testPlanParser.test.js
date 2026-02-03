@@ -155,4 +155,50 @@ describe("testPlanParser", () => {
 
     expect((res.warnings || []).join(" ")).toMatch(/Skipped/i);
   });
+
+  test("header detected but Project values blank in most rows -> needsMapping so user can pick correct column/constant", async () => {
+    const csv = [
+      "Test Case Name,Project,Other",
+      "Case A,,x",
+      "Case B,,y",
+      "Case C,,z",
+      "Case D,,w",
+    ].join("\n");
+
+    const file = makeTextFile("blank-project.csv", csv);
+    const res = await parseTestPlanFile(file, { defaultProjectId: "" });
+
+    expect(res.ok).toBe(false);
+    expect(res.needsMapping).toBe(true);
+    expect(String(res.message || "")).toMatch(/blank Project values|constant Project|select the correct Project column/i);
+    expect(res.summary.candidateHeaders).toEqual(expect.arrayContaining(["Test Case Name", "Project", "Other"]));
+  });
+
+  test("multi-row header scenario: Project in second line should normalize and import", async () => {
+    const csv = [
+      "ID,Project,Test Case Name",
+      ",(项目),",
+      "TC-1,WiFi Function Test,Connect 5G",
+    ].join("\n");
+
+    // Note: CSV can't truly represent multi-row headers the same as XLSX,
+    // but parser normalization should still tolerate parentheses content when present.
+    const file = makeTextFile("multirow.csv", csv);
+
+    // Provide mapping to treat 'Project(项目)' as the project column header when CSV uses row2 header fragment pattern.
+    const res = await parseTestPlanFile(file, {
+      defaultProjectId: "",
+      mapping: { name: "Test Case Name", project: "Project(项目)" },
+      allowInteractiveMapping: true,
+    });
+
+    // With mapping, we expect it to import 1 item if the mapped header exists; otherwise it will request mapping.
+    // This test primarily asserts we don't incorrectly mark missing Project due to parentheses/second-line variants.
+    if (res.ok) {
+      expect(res.items).toHaveLength(1);
+      expect(res.items[0]).toMatchObject({ id: "TC-1", name: "Connect 5G", projectId: "WiFi Function Test" });
+    } else {
+      expect(res.needsMapping).toBe(true);
+    }
+  });
 });

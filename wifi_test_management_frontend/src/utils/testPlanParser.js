@@ -102,11 +102,18 @@ function normalizeRowKeys(row) {
   return out;
 }
 
-function firstNonEmpty(obj, keys) {
+function firstNonEmpty(obj, keys, { treatNAAsEmpty = false } = {}) {
   for (const k of keys) {
     const v = obj?.[k];
     const s = strTrim(v);
-    if (s) return s;
+    if (!s) continue;
+
+    if (treatNAAsEmpty) {
+      const t = s.trim().toLowerCase();
+      if (t === "n/a" || t === "na" || t === "-" || t === "--") continue;
+    }
+
+    return s;
   }
   return "";
 }
@@ -591,17 +598,24 @@ function buildRequiredColumnsHelp() {
  * - alias list matching
  * - direct key match
  */
-function getFieldValue(normalizedRow, { field, mapping }) {
+function getFieldValue(normalizedRow, { field, mapping, treatNAAsEmpty = false }) {
   const mappingKey = mapping?.[field] ? normalizeHeaderKey(mapping[field]) : "";
   if (mappingKey && mappingKey in normalizedRow) return normalizedRow[mappingKey];
 
   const aliases = HEADER_ALIASES[field] || [];
-  const hit = firstNonEmpty(normalizedRow, aliases);
+  const hit = firstNonEmpty(normalizedRow, aliases, { treatNAAsEmpty });
   if (hit) return hit;
 
   // Also accept direct normalized field name if present.
-  const direct = strTrim(normalizedRow?.[normalizeHeaderKey(field)]);
-  if (direct) return direct;
+  const directRaw = normalizedRow?.[normalizeHeaderKey(field)];
+  const direct = strTrim(directRaw);
+  if (direct) {
+    if (treatNAAsEmpty) {
+      const t = direct.trim().toLowerCase();
+      if (t === "n/a" || t === "na" || t === "-" || t === "--") return "";
+    }
+    return direct;
+  }
 
   return "";
 }
@@ -610,11 +624,12 @@ function getFieldValue(normalizedRow, { field, mapping }) {
  * Convert one row to a TestCase object (or return a structured invalid result).
  * @returns {{ ok: true, item: any } | { ok: false, reason: string, missing: string[] }}
  */
-function rowToTestCaseValidated(row, { defaultProjectId, mapping } = {}) {
+function rowToTestCaseValidated(row, { defaultProjectId, mapping, projectConstant, treatNAAsEmpty = false } = {}) {
   const r = normalizeRowKeys(row);
 
-  const name = strTrim(getFieldValue(r, { field: "name", mapping }));
-  const projectId = strTrim(getFieldValue(r, { field: "project", mapping })) || strTrim(defaultProjectId);
+  const name = strTrim(getFieldValue(r, { field: "name", mapping, treatNAAsEmpty }));
+  const projectFromRow = strTrim(getFieldValue(r, { field: "project", mapping, treatNAAsEmpty }));
+  const projectId = projectFromRow || strTrim(projectConstant) || strTrim(defaultProjectId);
 
   const missing = [];
   if (!name) missing.push("Name");
@@ -624,7 +639,7 @@ function rowToTestCaseValidated(row, { defaultProjectId, mapping } = {}) {
     return { ok: false, reason: `Missing required value(s): ${missing.join(", ")}`, missing };
   }
 
-  const externalId = strTrim(getFieldValue(r, { field: "id", mapping }));
+  const externalId = strTrim(getFieldValue(r, { field: "id", mapping, treatNAAsEmpty }));
 
   const descriptionBase =
     strTrim(getFieldValue(r, { field: "description", mapping })) ||
@@ -677,10 +692,10 @@ function getHeaderCandidates(rows) {
   return Array.from(seen.values());
 }
 
-function validateFileLevel(rows, { defaultProjectId, mapping } = {}) {
+function validateFileLevel(rows, { defaultProjectId, mapping, projectConstant } = {}) {
   const issues = [];
   let hasAnyName = false;
-  let hasAnyProject = Boolean(strTrim(defaultProjectId));
+  let hasAnyProject = Boolean(strTrim(projectConstant)) || Boolean(strTrim(defaultProjectId));
 
   for (const row of rows) {
     const r = normalizeRowKeys(row);
@@ -789,6 +804,8 @@ export async function parseTestPlanFile(
     defaultProjectId,
     mapping,
     allowInteractiveMapping = true,
+    projectConstant = "",
+    treatNAAsEmpty = false,
   } = {}
 ) {
   /**
@@ -906,7 +923,7 @@ export async function parseTestPlanFile(
   }
 
   // File-level validation: only fail if we truly can't find any values at all for required fields.
-  const fileLevelIssues = validateFileLevel(rows, { defaultProjectId, mapping });
+  const fileLevelIssues = validateFileLevel(rows, { defaultProjectId, mapping, projectConstant });
   if (fileLevelIssues.length) {
     const extra = buildRequiredColumnsHelp();
     const msg = `${fileLevelIssues.join(" ")} ${extra}`;
@@ -944,9 +961,27 @@ export async function parseTestPlanFile(
   const missingSamples = [];
   const maxSamples = 5;
 
+  // Track whether project header exists but values are mostly blank (common with merged/misaligned columns)
+  let rowsWithAnyName = 0;
+  let rowsWithProjectValue = 0;
+
   for (let i = 0; i < rows.length; i += 1) {
     const row = rows[i];
-    const res = rowToTestCaseValidated(row, { defaultProjectId, mapping });
+
+    const normalized = normalizeRowKeys(row);
+    const nameProbe = strTrim(getFieldValue(normalized, { field: "name", mapping, treatNAAsEmpty }));
+    const projectProbe = strTrim(getFieldValue(normalized, { field: "project", mapping, treatNAAsEmpty }));
+
+    if (nameProbe) rowsWithAnyName += 1;
+    if (projectProbe) rowsWithProjectValue += 1;
+
+    const res = rowToTestCaseValidated(row, {
+      defaultProjectId,
+      mapping,
+      projectConstant,
+      treatNAAsEmpty,
+    });
+
     if (!res.ok) {
       skippedRows += 1;
       if (res.missing.includes("Project")) skippedMissingProject += 1;
@@ -958,6 +993,42 @@ export async function parseTestPlanFile(
       continue;
     }
     items.push(res.item);
+  }
+
+  // If we detected a project header but very few rows have project values, guide user to mapping/constant.
+  // This addresses cases where the header exists (so auto-detection reports OK) but column values are blank
+  // because of merged header cells or the real Project column is elsewhere.
+  const projectHeaderDetected = Boolean(headerPresence?.detected?.project);
+  const effectiveHasFallback = Boolean(strTrim(projectConstant)) || Boolean(strTrim(defaultProjectId));
+  const projectCoverage = rowsWithAnyName > 0 ? rowsWithProjectValue / rowsWithAnyName : 0;
+
+  if (
+    allowInteractiveMapping &&
+    projectHeaderDetected &&
+    !effectiveHasFallback &&
+    rowsWithAnyName >= 3 &&
+    projectCoverage <= 0.15
+  ) {
+    const candidates = getHeaderCandidates(rows);
+    return {
+      ok: false,
+      needsMapping: true,
+      message:
+        "Project header was detected, but most rows have blank Project values. " +
+        "This often happens with merged cells or misaligned columns. Please select the correct Project column or set a constant Project.",
+      warnings,
+      summary: {
+        totalRows: totalRowsBefore,
+        blankRows,
+        importedRows: 0,
+        skippedRows: 0,
+        skippedMissingProject: 0,
+        skippedMissingName: 0,
+        detectedHeaders: headerPresence.detected,
+        missingHeaders: [],
+        candidateHeaders: candidates,
+      },
+    };
   }
 
   if (items.length === 0) {

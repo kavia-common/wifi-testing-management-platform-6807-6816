@@ -178,6 +178,7 @@ export default function TestCasesPage() {
   const [mappingModalOpen, setMappingModalOpen] = useState(false);
   const [mappingCandidates, setMappingCandidates] = useState([]);
   const [mappingDraft, setMappingDraft] = useState(() => readStoredMapping() || { name: "", project: "" });
+  const [mappingProjectConstant, setMappingProjectConstant] = useState("");
   const pendingImportRef = useRef(null); // { file, sourceLabel: string }
 
   // Reactive mock-import detection
@@ -252,10 +253,18 @@ export default function TestCasesPage() {
     setMappingCandidates(Array.isArray(candidates) ? candidates : []);
     const stored = readStoredMapping();
     setMappingDraft(stored || { name: "", project: "" });
+
+    // Suggest a constant project if user is currently filtering to a specific project.
+    const suggestedConstant =
+      projectFilter && projectFilter !== "All"
+        ? getProjectName(projects, projectFilter)
+        : "";
+    setMappingProjectConstant((prev) => prev || suggestedConstant);
+
     setMappingModalOpen(true);
   }
 
-  async function runImport({ file, mapping, sourceLabel }) {
+  async function runImport({ file, mapping, sourceLabel, projectConstant }) {
     const storedMapping = mapping || readStoredMapping() || null;
     const mappingApplied = storedMapping?.name || storedMapping?.project ? storedMapping : null;
 
@@ -263,6 +272,7 @@ export default function TestCasesPage() {
       defaultProjectId: projects?.[0]?.id || "",
       mapping: mappingApplied || undefined,
       allowInteractiveMapping: true,
+      projectConstant: projectConstant || "",
     });
 
     if (parsed?.needsMapping) {
@@ -273,10 +283,10 @@ export default function TestCasesPage() {
       });
       pushToast({
         variant: "info",
-        title: "Header mapping needed",
+        title: "Mapping needed",
         message:
-          `${parsed?.message || "Missing required headers."} ` +
-          "Tip: You can choose columns in the mapping dialog.",
+          `${parsed?.message || "Mapping required."} ` +
+          "Tip: you can select columns, or set a constant Project for this import.",
         ttlMs: 8000,
       });
       return;
@@ -288,35 +298,35 @@ export default function TestCasesPage() {
 
     const { items, warnings, summary } = parsed;
 
-    if (summary) {
-      pushToast({
-        variant: summary.skippedRows > 0 ? "info" : "success",
-        title: "Import summary",
-        message: `Imported ${summary.importedRows}. Skipped ${summary.skippedRows} (blank ${summary.blankRows}). ${
-          mappingApplied ? "Custom mapping applied." : "Auto-mapping used."
-        }`,
-        ttlMs: 7500,
-      });
-    }
-
-    if (warnings?.length) {
-      for (const w of warnings) {
-        pushToast({ variant: "info", title: "Import note", message: w, ttlMs: 6200 });
-      }
-    }
-
     const res = await testCasesApi.importTestPlan(items);
+    await refreshListAfterImport();
+
+    // Single consolidated toast (avoid contradictory/duplicate messaging)
+    const importedRows = summary?.importedRows ?? items?.length ?? 0;
+    const skippedRows = summary?.skippedRows ?? 0;
+    const blankRows = summary?.blankRows ?? 0;
+
+    const mappingNote = mappingApplied
+      ? ` Mapping: Name=${mappingApplied.name || "(auto)"}, Project=${mappingApplied.project || "(auto)"}.`
+      : "";
+    const constantNote = projectConstant ? ` Constant Project="${projectConstant}".` : "";
 
     pushToast({
-      variant: "success",
-      title: "TestPlan imported",
-      message: `Added ${res.added}, updated ${res.updated}, skipped ${res.skipped}. ${
-        mappingApplied ? `Mapping: Name=${mappingApplied.name || "(auto)"}, Project=${mappingApplied.project || "(auto)"}.` : ""
-      }`,
-      ttlMs: 6500,
+      variant: skippedRows > 0 ? "info" : "success",
+      title: "TestPlan import complete",
+      message: `Imported ${importedRows}. Skipped ${skippedRows} (blank ${blankRows}). Added ${res.added}, updated ${res.updated}, skipped ${res.skipped}.${mappingNote}${constantNote}`,
+      ttlMs: 8500,
     });
 
-    await refreshListAfterImport();
+    // Optional: keep warnings, but do not spam; show just one if present
+    if (warnings?.length) {
+      pushToast({
+        variant: "info",
+        title: "Import notes",
+        message: warnings.slice(0, 2).join(" "),
+        ttlMs: 7000,
+      });
+    }
 
     if (sourceLabel) {
       pushToast({
@@ -610,12 +620,22 @@ export default function TestCasesPage() {
           onClick={async () => {
             const nameCol = String(mappingDraft?.name || "").trim();
             const projectCol = String(mappingDraft?.project || "").trim();
+            const constantProject = String(mappingProjectConstant || "").trim();
 
-            if (!nameCol || !projectCol) {
+            if (!nameCol) {
               pushToast({
                 variant: "error",
                 title: "Missing mapping",
-                message: "Please select both Name and Project columns (or reset mapping).",
+                message: "Please select the Name column.",
+              });
+              return;
+            }
+
+            if (!projectCol && !constantProject) {
+              pushToast({
+                variant: "error",
+                title: "Missing Project mapping",
+                message: "Select a Project column OR provide a constant Project for this import.",
               });
               return;
             }
@@ -623,8 +643,8 @@ export default function TestCasesPage() {
             writeStoredMapping({ name: nameCol, project: projectCol });
             pushToast({
               variant: "success",
-              title: "Using custom header mapping",
-              message: `Name=${nameCol}, Project=${projectCol}`,
+              title: "Mapping saved",
+              message: `Name=${nameCol}, Project=${projectCol || "(constant)"}`,
               ttlMs: 6000,
             });
 
@@ -637,6 +657,7 @@ export default function TestCasesPage() {
                 await runImport({
                   file: pending.file,
                   mapping: { name: nameCol, project: projectCol },
+                  projectConstant: constantProject,
                   sourceLabel: pending.sourceLabel,
                 });
               } catch (e) {
@@ -969,9 +990,19 @@ export default function TestCasesPage() {
                 </div>
               </div>
 
+              <TextInput
+                label="Constant Project (optional)"
+                value={mappingProjectConstant}
+                onChange={(e) => setMappingProjectConstant(e.target.value)}
+                placeholder="e.g. WiFi Function Test"
+                ariaLabel="Constant Project value"
+                helperText="If the Project column is blank due to merged cells or misalignment, you can set a constant Project for this import."
+                autoComplete="off"
+              />
+
               <div style={{ fontSize: 12, color: "rgba(17, 24, 39, 0.62)", lineHeight: 1.45 }}>
                 Mapping is saved in localStorage (<span style={{ fontWeight: 900 }}>{TESTPLAN_MAPPING_STORAGE_KEY}</span>) and
-                can be reset here or in Settings.
+                can be reset here or in Settings. Constant Project is applied only for the current import.
               </div>
             </div>
           </div>

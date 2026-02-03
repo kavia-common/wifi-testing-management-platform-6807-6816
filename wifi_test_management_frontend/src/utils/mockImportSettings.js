@@ -47,9 +47,11 @@ export function isMockImportEnabled() {
     // (This is intentionally generous; localStorage can still explicitly disable it.)
     const envEnabled = normalizeBool(process.env.REACT_APP_USE_MOCKS);
 
-    if (raw == null) return true || envEnabled; // default on (and env may also enable)
+    // Default behavior: enabled (so template works out-of-box) unless explicitly disabled.
+    // If env enables it, it is also enabled.
+    if (raw == null) return envEnabled || true;
 
-    return normalizeBool(raw) || envEnabled;
+    return (raw != null ? normalizeBool(raw) : true) || envEnabled;
   } catch {
     // If localStorage access is blocked, fall back to env; else default to enabled.
     return normalizeBool(process.env.REACT_APP_USE_MOCKS) || true;
