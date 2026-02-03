@@ -9,6 +9,7 @@ import { normalizeParametersList, normalizeTagsFromString } from "../pages/testC
  * - Robust XLSX parsing (sheet selection heuristics, empty row handling).
  * - Header normalization + tolerant mapping for common WiFi test plan columns (including localized headers).
  * - Clear, actionable error messages when required fields are missing.
+ * - Row-level validation: skip blank rows; skip invalid rows but still import valid ones.
  */
 
 /** Max rows to import for safety (avoid locking UI on huge files). */
@@ -25,22 +26,41 @@ function toStringSafe(v) {
 }
 
 /**
+ * Convert fullwidth ASCII variants into halfwidth.
+ * Covers common spreadsheet-export quirks for Latin letters, digits, and punctuation.
+ */
+function toHalfWidthAscii(s) {
+  const str = toStringSafe(s);
+  let out = "";
+  for (const ch of str) {
+    const code = ch.charCodeAt(0);
+    // Fullwidth space -> normal space
+    if (code === 0x3000) out += " ";
+    // Fullwidth ASCII range -> halfwidth
+    else if (code >= 0xff01 && code <= 0xff5e) out += String.fromCharCode(code - 0xfee0);
+    else out += ch;
+  }
+  return out;
+}
+
+/**
  * Normalize headers to a comparison key:
  * - Trim
- * - Lowercase
+ * - Case-insensitive
  * - Remove BOM and zero-width characters
+ * - Fullwidth -> halfwidth for ASCII-ish characters
  * - Remove whitespace, underscores, hyphens
  * - Remove common punctuation separators
  */
 function normalizeHeaderKey(k) {
-  return toStringSafe(k)
+  return toHalfWidthAscii(toStringSafe(k))
     .replace(/^\uFEFF/, "") // BOM
     .replace(/[\u200B-\u200D\uFEFF]/g, "") // zero-width chars (defensive)
     .trim()
     .toLowerCase()
     .replace(/\s+/g, "")
     .replace(/[_-]+/g, "")
-    .replace(/[()【】[\]{}:：/\\|.，,;；]/g, "");
+    .replace(/[()\u3010\u3011[\]{}:\uFF1A/\\|.\uFF0C,;\uFF1B]/g, "");
 }
 
 /** Trim and turn any value into a non-empty string or "" */
@@ -89,40 +109,65 @@ const HEADER_ALIASES = {
     "testcasename",
     "title",
     "testname",
+    "test name",
+    "case name",
+    "casename",
     "item",
     "case",
-    "casename",
     // WiFi plan common
     "testitem",
     "function",
     "feature",
-    // Chinese
+    // Chinese (simplified/traditional variants)
     "用例名称",
     "测试用例名称",
     "用例名",
-    "名称",
+    "用例",
+    "名稱",
     "标题",
+    "標題",
     "测试项",
+    "測試項",
     "测试项目",
+    "測試項目",
     "功能点",
     "功能",
   ].map(normalizeHeaderKey),
 
+  /**
+   * Project column is often inconsistent across orgs:
+   * - Project / 项目 / 專案 / 項目
+   * - "Project Name"
+   * - "产品/产品线" sometimes used to indicate project/product line
+   */
   project: [
     "projectid",
     "project",
     "projectname",
+    "project name",
     "suite",
     "plan",
     "planname",
-    // Chinese
+    // Chinese simplified
     "项目",
     "项目名称",
+    "所属项目",
     "工程",
     "工程名称",
     "产品",
     "产品名称",
-    "所属项目",
+    "产品线",
+    "產品",
+    "產品名稱",
+    "產品線",
+    // Chinese traditional
+    "專案",
+    "專案名稱",
+    "項目",
+    "項目名稱",
+    // Slash-style headers commonly seen in templates
+    "产品/产品线",
+    "產品/產品線",
   ].map(normalizeHeaderKey),
 
   id: [
@@ -158,11 +203,16 @@ const HEADER_ALIASES = {
     // Chinese
     "描述",
     "说明",
+    "說明",
     "概要",
     "前置条件",
+    "前置條件",
     "步骤",
+    "步驟",
     "测试步骤",
+    "測試步驟",
     "操作步骤",
+    "操作步驟",
   ].map(normalizeHeaderKey),
 
   expectedResult: [
@@ -175,6 +225,7 @@ const HEADER_ALIASES = {
     "预期结果",
     "期望结果",
     "预期",
+    "結果",
     "结果",
   ].map(normalizeHeaderKey),
 
@@ -187,9 +238,12 @@ const HEADER_ALIASES = {
     "input",
     // Chinese
     "参数",
+    "輸入",
     "输入",
     "输入参数",
+    "輸入參數",
     "测试数据",
+    "測試數據",
   ].map(normalizeHeaderKey),
 
   tags: [
@@ -200,7 +254,9 @@ const HEADER_ALIASES = {
     "label",
     // Chinese
     "标签",
+    "標籤",
     "标记",
+    "標記",
   ].map(normalizeHeaderKey),
 
   category: [
@@ -210,8 +266,11 @@ const HEADER_ALIASES = {
     "type",
     // Chinese
     "分类",
+    "分類",
     "模块",
+    "模塊",
     "类型",
+    "類型",
   ].map(normalizeHeaderKey),
 
   priority: [
@@ -220,8 +279,10 @@ const HEADER_ALIASES = {
     "p",
     // Chinese
     "优先级",
+    "優先級",
     "重要度",
     "等级",
+    "等級",
   ].map(normalizeHeaderKey),
 };
 
@@ -245,7 +306,7 @@ function parseTagsAny(v) {
   }
 
   // allow comma/semicolon separated
-  const s = toStringSafe(v).replace(/；/g, ";").replace(/，/g, ",").replace(/;/g, ",");
+  const s = toStringSafe(v).replace(/\uFF1B/g, ";").replace(/\uFF0C/g, ",").replace(/;/g, ",");
   return normalizeTagsFromString(s);
 }
 
@@ -279,8 +340,8 @@ function parseParametersAny(v) {
 
   // key=value pairs separated by ; or , (including Chinese punctuation normalized above)
   const parts = raw
-    .replace(/；/g, ";")
-    .replace(/，/g, ",")
+    .replace(/\uFF1B/g, ";")
+    .replace(/\uFF0C/g, ",")
     .split(/[;,]+/g)
     .map((x) => x.trim())
     .filter(Boolean);
@@ -329,8 +390,11 @@ function chooseBestSheet(workbook) {
       "tc",
       "用例",
       "测试",
+      "測試",
       "测试用例",
+      "測試用例",
       "计划",
+      "計劃",
       "功能",
     ].some((w) => s.includes(w));
     return hits ? 10 : 0;
@@ -429,6 +493,48 @@ function getFieldValue(normalizedRow, { field, mapping }) {
   return "";
 }
 
+/**
+ * Determine which canonical fields appear to be present in the file headers.
+ * We look at *header keys* (not row values) so users can understand mapping issues quickly.
+ */
+function detectHeaderPresence(rows, { mapping } = {}) {
+  const presentKeys = new Set();
+
+  // Add normalized keys seen in headers across rows
+  for (const row of rows || []) {
+    for (const k of Object.keys(row || {})) {
+      const nk = normalizeHeaderKey(k);
+      if (nk) presentKeys.add(nk);
+    }
+  }
+
+  // If user provided explicit mapping overrides, treat those as "present" too (if they exist in keys)
+  const mapped = {};
+  for (const field of Object.keys(HEADER_ALIASES)) {
+    const mk = mapping?.[field] ? normalizeHeaderKey(mapping[field]) : "";
+    if (mk) mapped[field] = mk;
+  }
+
+  const canonicalFields = Object.keys(HEADER_ALIASES);
+  const detected = {};
+  const missing = {};
+
+  for (const field of canonicalFields) {
+    const aliasKeys = HEADER_ALIASES[field] || [];
+    const mappedKey = mapped[field];
+
+    const hit =
+      (mappedKey && presentKeys.has(mappedKey) && mappedKey) ||
+      aliasKeys.find((k) => presentKeys.has(k)) ||
+      (presentKeys.has(normalizeHeaderKey(field)) ? normalizeHeaderKey(field) : "");
+
+    if (hit) detected[field] = hit;
+    else missing[field] = aliasKeys.slice(0, 6); // short list for display
+  }
+
+  return { presentKeys, detected, missing };
+}
+
 function buildRequiredColumnsHelp() {
   // Keep this simple and user-facing; it shows typical headers we can read.
   return [
@@ -437,11 +543,23 @@ function buildRequiredColumnsHelp() {
   ].join(" ");
 }
 
-function rowToTestCase(row, { defaultProjectId, mapping } = {}) {
+/**
+ * Convert one row to a TestCase object (or return a structured invalid result).
+ * @returns {{ ok: true, item: any } | { ok: false, reason: string, missing: string[] }}
+ */
+function rowToTestCaseValidated(row, { defaultProjectId, mapping } = {}) {
   const r = normalizeRowKeys(row);
 
   const name = strTrim(getFieldValue(r, { field: "name", mapping }));
   const projectId = strTrim(getFieldValue(r, { field: "project", mapping })) || strTrim(defaultProjectId);
+
+  const missing = [];
+  if (!name) missing.push("Name");
+  if (!projectId) missing.push("Project");
+
+  if (missing.length) {
+    return { ok: false, reason: `Missing required value(s): ${missing.join(", ")}`, missing };
+  }
 
   const externalId = strTrim(getFieldValue(r, { field: "id", mapping }));
 
@@ -468,29 +586,31 @@ function rowToTestCase(row, { defaultProjectId, mapping } = {}) {
 
   const parameters = parseParametersAny(getFieldValue(r, { field: "parameters", mapping }) || r.parameters);
 
-  // Minimal validation (more handled by caller)
-  if (!name || !projectId) return null;
-
   return {
-    id: externalId ? toStringSafe(externalId) : undefined,
-    name,
-    projectId,
-    description,
-    tags: mergedTags,
-    parameters,
-    usage: { executions: 0, results: 0 },
-    createdAt: nowIso(),
-    updatedAt: nowIso(),
+    ok: true,
+    item: {
+      id: externalId ? toStringSafe(externalId) : undefined,
+      name,
+      projectId,
+      description,
+      tags: mergedTags,
+      parameters,
+      usage: { executions: 0, results: 0 },
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    },
   };
 }
 
 /**
- * Validate that rows contain required columns.
- * We validate by checking if at least one row contains a non-empty value for both required fields.
+ * Validate the *file-level* presence of required columns/values.
+ *
+ * Important: We do NOT fail the entire import just because some rows are missing Project.
+ * We only throw if we can't find any plausible Name/Project values at all (i.e., header mapping likely wrong),
+ * and no defaultProjectId fallback is provided.
  */
-function validateRequiredColumns(rows, { defaultProjectId, mapping } = {}) {
+function validateFileLevel(rows, { defaultProjectId, mapping } = {}) {
   const issues = [];
-
   let hasAnyName = false;
   let hasAnyProject = Boolean(strTrim(defaultProjectId));
 
@@ -505,8 +625,11 @@ function validateRequiredColumns(rows, { defaultProjectId, mapping } = {}) {
     if (hasAnyName && hasAnyProject) break;
   }
 
-  if (!hasAnyName) issues.push("Missing required column/value for Name (用例名称).");
-  if (!hasAnyProject) issues.push("Missing required column/value for Project (项目).");
+  // If we can't find any name at all, we should fail early: likely wrong header.
+  if (!hasAnyName) issues.push("Could not find any values for Name (用例名称). Check the header row/aliases.");
+
+  // If no defaultProjectId is provided AND we never see any project values, likely wrong header.
+  if (!hasAnyProject) issues.push("Could not find any values for Project (项目/專案/項目/产品线). Check the header row/aliases.");
 
   return issues;
 }
@@ -515,7 +638,18 @@ function validateRequiredColumns(rows, { defaultProjectId, mapping } = {}) {
 export async function parseTestPlanFile(file, { defaultProjectId, mapping } = {}) {
   /**
    * Parses a CSV/XLSX/JSON TestPlan file into normalized TestCase-like objects.
-   * Returns { items, warnings } where warnings are user-displayable strings.
+   *
+   * Returns:
+   * {
+   *   items: TestCase[],
+   *   warnings: string[],
+   *   summary: {
+   *     totalRows, blankRows, importedRows, skippedRows,
+   *     skippedMissingProject, skippedMissingName,
+   *     missingHeaders: string[],
+   *     detectedHeaders: Record<string,string>
+   *   }
+   * }
    *
    * Options:
    * - defaultProjectId: if provided, rows missing Project can still import (projectId fallback).
@@ -548,49 +682,94 @@ export async function parseTestPlanFile(file, { defaultProjectId, mapping } = {}
     }
   }
 
-  rows = (Array.isArray(rows) ? rows : []).filter((r) => !isRowEmpty(r));
-
-  if (!Array.isArray(rows) || rows.length === 0) {
+  rows = Array.isArray(rows) ? rows : [];
+  if (rows.length === 0) {
     throw new Error("No rows found in file");
   }
+
+  const totalRowsBefore = rows.length;
+  const nonBlankRows = rows.filter((r) => !isRowEmpty(r));
+  const blankRows = totalRowsBefore - nonBlankRows.length;
+
+  if (blankRows > 0) warnings.push(`Skipped ${blankRows} blank row(s).`);
+
+  rows = nonBlankRows;
 
   if (rows.length > MAX_ROWS) {
     warnings.push(`File contains ${rows.length} rows; only the first ${MAX_ROWS} will be imported.`);
     rows = rows.slice(0, MAX_ROWS);
   }
 
-  // Validate required columns/values with a user-friendly message.
-  const requiredIssues = validateRequiredColumns(rows, { defaultProjectId, mapping });
-  if (requiredIssues.length) {
+  const headerPresence = detectHeaderPresence(rows, { mapping });
+  const requiredHeaderFields = ["name", "project"];
+  const missingHeaders = requiredHeaderFields.filter((f) => !headerPresence.detected[f]);
+
+  // Add a helpful header summary note (requested: helpful toast summary listing detected/missing).
+  const detectedPairs = Object.entries(headerPresence.detected)
+    .filter(([k]) => requiredHeaderFields.includes(k))
+    .map(([k, v]) => `${k}→${v}`);
+  warnings.push(
+    `Detected headers: ${detectedPairs.length ? detectedPairs.join(", ") : "(none)"}; Missing: ${
+      missingHeaders.length ? missingHeaders.join(", ") : "(none)"
+    }.`
+  );
+
+  // File-level validation: avoid false "missing Project" when headers vary.
+  // Only fail if we truly can't find any values at all for required fields.
+  const fileLevelIssues = validateFileLevel(rows, { defaultProjectId, mapping });
+  if (fileLevelIssues.length) {
     const extra = buildRequiredColumnsHelp();
-    throw new Error(`${requiredIssues.join(" ")} ${extra}`);
+    throw new Error(`${fileLevelIssues.join(" ")} ${extra}`);
   }
 
   const items = [];
-  let dropped = 0;
+  let skippedRows = 0;
+  let skippedMissingProject = 0;
+  let skippedMissingName = 0;
 
-  for (const row of rows) {
-    const tc = rowToTestCase(row, { defaultProjectId, mapping });
-    if (!tc) {
-      dropped += 1;
+  const missingSamples = [];
+  const maxSamples = 5;
+
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i];
+    const res = rowToTestCaseValidated(row, { defaultProjectId, mapping });
+    if (!res.ok) {
+      skippedRows += 1;
+      if (res.missing.includes("Project")) skippedMissingProject += 1;
+      if (res.missing.includes("Name")) skippedMissingName += 1;
+
+      // Keep a few examples to help user fix their sheet
+      if (missingSamples.length < maxSamples) {
+        missingSamples.push(`Row ${i + 2}: ${res.reason}`); // +2: header row is row 1 in spreadsheets
+      }
       continue;
     }
-    items.push(tc);
+    items.push(res.item);
   }
 
   if (items.length === 0) {
-    throw new Error(
-      `No valid test cases found after parsing. ${buildRequiredColumnsHelp()}`
-    );
+    throw new Error(`No valid test cases found after parsing. ${buildRequiredColumnsHelp()}`);
   }
 
-  if (dropped > 0) {
+  if (skippedRows > 0) {
     warnings.push(
-      `${dropped} row(s) were skipped due to missing required fields (Name/Project).`
+      `Skipped ${skippedRows} row(s) missing required values. (Missing Project: ${skippedMissingProject}, Missing Name: ${skippedMissingName})`
     );
+    if (missingSamples.length) warnings.push(`Examples: ${missingSamples.join(" | ")}`);
   }
 
-  return { items, warnings };
+  const summary = {
+    totalRows: totalRowsBefore,
+    blankRows,
+    importedRows: items.length,
+    skippedRows,
+    skippedMissingProject,
+    skippedMissingName,
+    detectedHeaders: headerPresence.detected,
+    missingHeaders,
+  };
+
+  return { items, warnings, summary };
 }
 
 // PUBLIC_INTERFACE

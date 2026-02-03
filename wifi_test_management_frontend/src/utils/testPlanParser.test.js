@@ -9,11 +9,14 @@ function makeTextFile(name, text) {
 }
 
 describe("testPlanParser", () => {
-  test("normalizeHeaderKey removes BOM/whitespace/punctuation and lowercases", () => {
+  test("normalizeHeaderKey removes BOM/whitespace/punctuation and lowercases (and halfwidth normalizes)", () => {
     expect(normalizeHeaderKeyForTests("\uFEFF Test Case Name ")).toBe("testcasename");
     expect(normalizeHeaderKeyForTests("预期结果")).toBe("预期结果");
     expect(normalizeHeaderKeyForTests("Project_ID")).toBe("projectid");
     expect(normalizeHeaderKeyForTests("标签/Tags")).toBe("标签tags");
+
+    // Fullwidth ASCII should normalize
+    expect(normalizeHeaderKeyForTests("Ｐｒｏｊｅｃｔ　Ｎａｍｅ")).toBe("projectname");
   });
 
   test("parses CSV with common Chinese headers into TestCase items", async () => {
@@ -23,9 +26,8 @@ describe("testPlanParser", () => {
     ].join("\n");
 
     const file = makeTextFile("WiFi Function TestPlan.csv", csv);
-    const { items, warnings } = await parseTestPlanFile(file, { defaultProjectId: "" });
+    const { items, warnings, summary } = await parseTestPlanFile(file, { defaultProjectId: "" });
 
-    expect(warnings || []).toEqual([]);
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({
       id: "TC-001",
@@ -40,12 +42,59 @@ describe("testPlanParser", () => {
         expect.objectContaining({ key: "ssid", value: "TestAP" }),
       ])
     );
+
+    // Summary should exist and not show missing required headers
+    expect(summary).toBeTruthy();
+    expect(summary.missingHeaders || []).toEqual([]);
+    expect(Array.isArray(warnings)).toBe(true);
   });
 
-  test("fails with clear error when required columns/values are missing", async () => {
+  test("supports additional header aliases (traditional Chinese + English variants)", async () => {
+    const csv = [
+      "Case Name,Project Name,描述",
+      "Roaming basic,專案A,Some steps",
+    ].join("\n");
+
+    const file = makeTextFile("aliases.csv", csv);
+    const { items, summary } = await parseTestPlanFile(file, { defaultProjectId: "" });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      name: "Roaming basic",
+      projectId: "專案A",
+    });
+    expect(summary.missingHeaders || []).toEqual([]);
+  });
+
+  test("does not fail entire import if some rows are missing Project (skips invalid rows and reports counts)", async () => {
+    const csv = [
+      "用例名,项目,标签",
+      "Valid case,ProjA,smoke",
+      "Missing project,,wifi",
+      ",ProjB,blankname",
+      "  ,  ,  ", // blank row
+      "Another valid,項目B,regression",
+    ].join("\n");
+
+    const file = makeTextFile("partial.csv", csv);
+    const { items, summary, warnings } = await parseTestPlanFile(file, { defaultProjectId: "" });
+
+    expect(items).toHaveLength(2);
+    expect(items.map((x) => x.projectId)).toEqual(expect.arrayContaining(["ProjA", "項目B"]));
+
+    expect(summary.importedRows).toBe(2);
+    expect(summary.skippedRows).toBeGreaterThanOrEqual(2);
+    expect(summary.skippedMissingProject).toBeGreaterThanOrEqual(1);
+    expect(summary.blankRows).toBeGreaterThanOrEqual(1);
+
+    // Warnings should include skip info
+    expect((warnings || []).join(" ")).toMatch(/Skipped/i);
+  });
+
+  test("fails with clear error when required fields cannot be found at all", async () => {
     const csv = ["ID,SomethingElse", "1,abc"].join("\n");
     const file = makeTextFile("bad.csv", csv);
 
-    await expect(parseTestPlanFile(file)).rejects.toThrow(/Missing required column\/value for Name/i);
+    await expect(parseTestPlanFile(file)).rejects.toThrow(/Could not find any values for Name/i);
   });
 });

@@ -248,13 +248,25 @@ export default function TestCasesPage() {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       });
 
-      const { items, warnings } = await parseTestPlanFile(file, {
+      const { items, warnings, summary } = await parseTestPlanFile(file, {
         defaultProjectId: projects?.[0]?.id || "",
       });
 
+      // Show a compact summary first (headers + skip counts), then any additional notes.
+      if (summary) {
+        pushToast({
+          variant: summary.skippedRows > 0 ? "info" : "success",
+          title: "Import summary",
+          message: `Imported ${summary.importedRows}. Skipped ${summary.skippedRows} (blank ${summary.blankRows}). Missing headers: ${
+            summary.missingHeaders?.length ? summary.missingHeaders.join(", ") : "none"
+          }.`,
+          ttlMs: 7000,
+        });
+      }
+
       if (warnings?.length) {
         for (const w of warnings) {
-          pushToast({ variant: "info", title: "Import note", message: w, ttlMs: 5200 });
+          pushToast({ variant: "info", title: "Import note", message: w, ttlMs: 6200 });
         }
       }
 
@@ -478,13 +490,24 @@ export default function TestCasesPage() {
 
     setImporting(true);
     try {
-      const { items, warnings } = await parseTestPlanFile(file, {
+      const { items, warnings, summary } = await parseTestPlanFile(file, {
         defaultProjectId: projects?.[0]?.id || "",
       });
 
+      if (summary) {
+        pushToast({
+          variant: summary.skippedRows > 0 ? "info" : "success",
+          title: "Import summary",
+          message: `Imported ${summary.importedRows}. Skipped ${summary.skippedRows} (blank ${summary.blankRows}). Missing headers: ${
+            summary.missingHeaders?.length ? summary.missingHeaders.join(", ") : "none"
+          }.`,
+          ttlMs: 7000,
+        });
+      }
+
       if (warnings?.length) {
         for (const w of warnings) {
-          pushToast({ variant: "info", title: "Import note", message: w, ttlMs: 5200 });
+          pushToast({ variant: "info", title: "Import note", message: w, ttlMs: 6200 });
         }
       }
 
