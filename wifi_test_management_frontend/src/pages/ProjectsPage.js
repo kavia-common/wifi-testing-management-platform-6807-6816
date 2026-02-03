@@ -4,10 +4,10 @@ import { Badge, Button, EmptyState, Table, TextInput } from "../components/ui";
 import {
   badgeVariantForProjectStatus,
   formatDate,
-  getMockProjectsSeed,
   normalizeProjectStatus,
 } from "./projectsMockData";
 import ProjectUpsertModal from "./ProjectUpsertModal";
+import { isMockModeEnabled, projectsApi, useApiRequest } from "../api";
 
 function matchesQuery(project, query) {
   if (!query) return true;
@@ -35,17 +35,20 @@ function matchesStatus(project, statusFilter) {
   return normalizeProjectStatus(project.status) === statusFilter;
 }
 
-function makeProjectId() {
-  // Stable enough for mock UI; replace with backend IDs later.
-  return `proj-${Math.floor(1000 + Math.random() * 9000)}`;
-}
-
 // PUBLIC_INTERFACE
 export default function ProjectsPage() {
-  /** Projects list screen: search + filter + create/edit modal (local mock state). */
+  /** Projects list screen: search + filter + create/edit modal (API-backed with mock fallback). */
   const navigate = useNavigate();
 
-  const [projects, setProjects] = useState(() => getMockProjectsSeed());
+  const {
+    data: projectsData,
+    loading,
+    error,
+    setData: setProjectsData,
+  } = useApiRequest(() => projectsApi.list(), [], { immediate: true, initialData: [] });
+
+  const projects = Array.isArray(projectsData) ? projectsData : [];
+
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
 
@@ -146,43 +149,29 @@ export default function ProjectsPage() {
     setModalOpen(true);
   }
 
-  function handleSave(formValues) {
-    if (modalMode === "edit" && editingProject) {
-      setProjects((prev) =>
-        prev.map((p) => {
-          if (p.id !== editingProject.id) return p;
-          return {
-            ...p,
-            ...formValues,
-            status: normalizeProjectStatus(formValues.status),
-            tags: formValues.tags || [],
-            updatedAt: new Date().toISOString(),
-          };
-        })
-      );
+  async function handleSave(formValues) {
+    const payload = {
+      ...formValues,
+      status: normalizeProjectStatus(formValues.status),
+      tags: formValues.tags || [],
+    };
+
+    try {
+      if (modalMode === "edit" && editingProject) {
+        const updated = await projectsApi.update(editingProject.id, payload);
+        setProjectsData((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+        setModalOpen(false);
+        return;
+      }
+
+      const created = await projectsApi.create(payload);
+      setProjectsData((prev) => [created, ...prev]);
       setModalOpen(false);
-      return;
+      navigate(`/projects/${created.id}`);
+    } catch (e) {
+      // eslint-disable-next-line no-alert
+      window.alert(e?.message || "Failed to save project");
     }
-
-    // Create
-    const nowIso = new Date().toISOString();
-    const newId = makeProjectId();
-    setProjects((prev) => [
-      {
-        id: newId,
-        ...formValues,
-        status: normalizeProjectStatus(formValues.status),
-        tags: formValues.tags || [],
-        createdAt: nowIso,
-        updatedAt: nowIso,
-        counts: { testCases: 0, executions: 0, results: 0 },
-      },
-      ...prev,
-    ]);
-    setModalOpen(false);
-
-    // Optional nice UX: go straight to details after creation.
-    navigate(`/projects/${newId}`);
   }
 
   return (
@@ -267,12 +256,21 @@ export default function ProjectsPage() {
           </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12, alignItems: "center" }}>
-            <Badge variant="primary">Mock mode</Badge>
+            <Badge variant={isMockModeEnabled() ? "primary" : "neutral"}>
+              {isMockModeEnabled() ? "Mock mode" : "API mode"}
+            </Badge>
             <div style={{ fontSize: 13, color: "rgba(17, 24, 39, 0.72)", lineHeight: 1.45 }}>
-              Projects are stored in local page state for now. Later we’ll swap to API calls without changing the UI
-              layout.
+              {isMockModeEnabled()
+                ? "Projects are served from the local mock API store."
+                : "Projects are fetched from the backend API (base URL from env)."}
             </div>
           </div>
+
+          {error ? (
+            <div style={{ marginTop: 10, fontSize: 12, color: "var(--color-error)", fontWeight: 800 }}>
+              Error: {error.message}
+            </div>
+          ) : null}
         </section>
 
         <section aria-label="Projects table">
@@ -283,15 +281,17 @@ export default function ProjectsPage() {
             getRowKey={(r) => r.id}
             emptyState={
               <EmptyState
-                title={projects.length === 0 ? "No projects yet" : "No matches"}
+                title={loading ? "Loading projects…" : projects.length === 0 ? "No projects yet" : "No matches"}
                 description={
-                  projects.length === 0
-                    ? "Create your first project to start organizing test cases and executions."
-                    : "Try adjusting your search or filter."
+                  loading
+                    ? "Fetching projects."
+                    : projects.length === 0
+                      ? "Create your first project to start organizing test cases and executions."
+                      : "Try adjusting your search or filter."
                 }
                 action={
                   <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                    <Button variant="primary" onClick={openCreate}>
+                    <Button variant="primary" onClick={openCreate} disabled={loading}>
                       Create Project
                     </Button>
                     {projects.length > 0 ? (
@@ -301,6 +301,7 @@ export default function ProjectsPage() {
                           setQuery("");
                           setStatusFilter("All");
                         }}
+                        disabled={loading}
                       >
                         Clear filters
                       </Button>
@@ -332,3 +333,4 @@ export default function ProjectsPage() {
     </div>
   );
 }
+

@@ -1,16 +1,14 @@
 import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Badge, Button, EmptyState, Table, TextInput } from "../components/ui";
-import { getMockProjectsSeed } from "./projectsMockData";
 import {
   deriveUsageForNewTestCase,
   formatDateTime,
-  getMockTestCasesSeed,
-  makeTestCaseId,
   normalizeParametersList,
   normalizeTagsFromString,
 } from "./testCasesMockData";
 import TestCaseUpsertModal from "./TestCaseUpsertModal";
+import { isMockModeEnabled, projectsApi, testCasesApi, useApiRequest } from "../api";
 
 function getProjectName(projects, projectId) {
   return projects.find((p) => p.id === projectId)?.name || "Unknown project";
@@ -99,11 +97,28 @@ function SelectField({ id, label, value, onChange, options, helperText }) {
 
 // PUBLIC_INTERFACE
 export default function TestCasesPage() {
-  /** Test cases list screen: search + filter + create/edit modal (local mock state) + details navigation. */
+  /** Test cases list screen: search + filter + create/edit modal (API-backed with mock fallback). */
   const navigate = useNavigate();
 
-  const [projects, setProjects] = useState(() => getMockProjectsSeed());
-  const [testCases, setTestCases] = useState(() => getMockTestCasesSeed());
+  const {
+    data: projectsData,
+    loading: projectsLoading,
+    error: projectsError,
+    setData: setProjects,
+  } = useApiRequest(() => projectsApi.list(), [], { immediate: true, initialData: [] });
+
+  const {
+    data: testCasesData,
+    loading: testCasesLoading,
+    error: testCasesError,
+    setData: setTestCases,
+  } = useApiRequest(() => testCasesApi.list(), [], { immediate: true, initialData: [] });
+
+  const projects = Array.isArray(projectsData) ? projectsData : [];
+  const testCases = Array.isArray(testCasesData) ? testCasesData : [];
+
+  const loading = projectsLoading || testCasesLoading;
+  const error = projectsError || testCasesError;
 
   const [query, setQuery] = useState("");
   const [projectFilter, setProjectFilter] = useState("All");
@@ -210,11 +225,17 @@ export default function TestCasesPage() {
             <Button
               variant="error"
               size="sm"
-              onClick={() => {
+              onClick={async () => {
                 // eslint-disable-next-line no-alert
-                const ok = window.confirm(`Delete "${tc.name}"? This only affects local mock state.`);
+                const ok = window.confirm(`Delete "${tc.name}"?`);
                 if (!ok) return;
-                setTestCases((prev) => prev.filter((x) => x.id !== tc.id));
+                try {
+                  await testCasesApi.delete(tc.id);
+                  setTestCases((prev) => prev.filter((x) => x.id !== tc.id));
+                } catch (e) {
+                  // eslint-disable-next-line no-alert
+                  window.alert(e?.message || "Failed to delete test case");
+                }
               }}
             >
               Delete
@@ -223,7 +244,7 @@ export default function TestCasesPage() {
         ),
       },
     ],
-    [navigate, projects]
+    [navigate, projects, setTestCases]
   );
 
   function openCreate() {
@@ -232,7 +253,7 @@ export default function TestCasesPage() {
     setModalOpen(true);
   }
 
-  function handleSave(formValues) {
+  async function handleSave(formValues) {
     // Normalize here as well to keep list consistent, even if modal normalized.
     const normalized = {
       ...formValues,
@@ -240,53 +261,47 @@ export default function TestCasesPage() {
       parameters: normalizeParametersList(formValues.parameters),
     };
 
-    if (modalMode === "edit" && editingTestCase) {
-      setTestCases((prev) =>
-        prev.map((tc) => {
-          if (tc.id !== editingTestCase.id) return tc;
-          return {
-            ...tc,
-            ...normalized,
-            updatedAt: new Date().toISOString(),
-          };
-        })
-      );
-      setModalOpen(false);
-      return;
-    }
+    try {
+      if (modalMode === "edit" && editingTestCase) {
+        const updated = await testCasesApi.update(editingTestCase.id, normalized);
+        setTestCases((prev) => prev.map((tc) => (tc.id === updated.id ? updated : tc)));
+        setModalOpen(false);
+        return;
+      }
 
-    const nowIso = new Date().toISOString();
-    const newId = makeTestCaseId();
-    const usage = deriveUsageForNewTestCase();
-
-    setTestCases((prev) => [
-      {
-        id: newId,
+      // Create: ensure usage exists (mock helper gives nice non-empty details)
+      const payload = {
         ...normalized,
-        createdAt: nowIso,
-        updatedAt: nowIso,
-        usage,
-      },
-      ...prev,
-    ]);
+        usage: normalized.usage || deriveUsageForNewTestCase(),
+      };
+      const created = await testCasesApi.create(payload);
 
-    // Update project counts in-page (mock association)
-    setProjects((prev) =>
-      prev.map((p) => {
-        if (p.id !== normalized.projectId) return p;
-        return {
-          ...p,
-          updatedAt: nowIso,
-          counts: {
-            ...(p.counts || {}),
-            testCases: (p.counts?.testCases ?? 0) + 1,
-          },
-        };
-      })
-    );
+      setTestCases((prev) => [created, ...prev]);
 
-    setModalOpen(false);
-    navigate(`/test-cases/${newId}`);
+      // Best-effort: update project counts in UI cache if mocks are on (mock store already does it)
+      if (isMockModeEnabled()) {
+        setProjects((prev) =>
+          prev.map((p) => {
+            if (p.id !== created.projectId) return p;
+            const nowIso = new Date().toISOString();
+            return {
+              ...p,
+              updatedAt: nowIso,
+              counts: {
+                ...(p.counts || {}),
+                testCases: (p.counts?.testCases ?? 0) + 1,
+              },
+            };
+          })
+        );
+      }
+
+      setModalOpen(false);
+      navigate(`/test-cases/${created.id}`);
+    } catch (e) {
+      // eslint-disable-next-line no-alert
+      window.alert(e?.message || "Failed to save test case");
+    }
   }
 
   return (
@@ -301,7 +316,7 @@ export default function TestCasesPage() {
           </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
-            <Button variant="primary" onClick={openCreate}>
+            <Button variant="primary" onClick={openCreate} disabled={loading}>
               Create Test Case
             </Button>
           </div>
@@ -354,11 +369,19 @@ export default function TestCasesPage() {
           </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12, alignItems: "center" }}>
-            <Badge variant="primary">Mock mode</Badge>
+            <Badge variant={isMockModeEnabled() ? "primary" : "neutral"}>
+              {isMockModeEnabled() ? "Mock mode" : "API mode"}
+            </Badge>
             <div style={{ fontSize: 13, color: "rgba(17, 24, 39, 0.72)", lineHeight: 1.45 }}>
-              Test cases are stored in local page state. Routing and UI structure will stay the same when wired to APIs.
+              Test cases are loaded via the centralized API layer.
             </div>
           </div>
+
+          {error ? (
+            <div style={{ marginTop: 10, fontSize: 12, color: "var(--color-error)", fontWeight: 800 }}>
+              Error: {error.message}
+            </div>
+          ) : null}
         </section>
 
         <section aria-label="Test cases table">
@@ -369,15 +392,17 @@ export default function TestCasesPage() {
             getRowKey={(r) => r.id}
             emptyState={
               <EmptyState
-                title={testCases.length === 0 ? "No test cases yet" : "No matches"}
+                title={loading ? "Loading test cases…" : testCases.length === 0 ? "No test cases yet" : "No matches"}
                 description={
-                  testCases.length === 0
-                    ? "Create your first test case to begin building a reusable library."
-                    : "Try adjusting your search or filters."
+                  loading
+                    ? "Fetching test cases."
+                    : testCases.length === 0
+                      ? "Create your first test case to begin building a reusable library."
+                      : "Try adjusting your search or filters."
                 }
                 action={
                   <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                    <Button variant="primary" onClick={openCreate}>
+                    <Button variant="primary" onClick={openCreate} disabled={loading}>
                       Create Test Case
                     </Button>
                     {testCases.length > 0 ? (
@@ -388,6 +413,7 @@ export default function TestCasesPage() {
                           setProjectFilter("All");
                           setTagFilter("All");
                         }}
+                        disabled={loading}
                       >
                         Clear filters
                       </Button>
@@ -400,8 +426,8 @@ export default function TestCasesPage() {
         </section>
 
         <div style={{ marginTop: 12, fontSize: 12, color: "rgba(17, 24, 39, 0.62)" }}>
-          Tip: You can open a test case directly via URL (e.g.,{" "}
-          <span style={{ fontWeight: 900 }}>/test-cases/tc-1</span>).
+          Tip: You can open a test case directly via URL (e.g., <span style={{ fontWeight: 900 }}>/test-cases/tc-1</span>
+          ).
         </div>
 
         <TestCaseUpsertModal
@@ -417,3 +443,4 @@ export default function TestCasesPage() {
     </div>
   );
 }
+

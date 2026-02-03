@@ -1,19 +1,17 @@
 import React, { useMemo, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Badge, Button, EmptyState, Table, TextInput, Modal } from "../components/ui";
-import { getMockProjectsSeed } from "./projectsMockData";
-import { getMockExecutionsSeed } from "./executionsMockData";
 import {
   badgeVariantForResultStatus,
   formatBytes,
   formatResultDateTime,
-  getMockResultsSeed,
   matchesResultProject,
   matchesResultStatus,
   matchesResultTimeRange,
   normalizeResultStatus,
   parseLocalDateTimeToIso,
 } from "./resultsMockData";
+import { executionsApi, isMockModeEnabled, projectsApi, resultsApi, useApiRequest } from "../api";
 
 function SelectField({ id, label, value, onChange, options, helperText }) {
   return (
@@ -84,12 +82,21 @@ function matchesQuery(r, query) {
 
 // PUBLIC_INTERFACE
 export default function ResultsPage() {
-  /** Results list screen: filter/search + status metrics + quick actions (local mock state). */
+  /** Results list screen: filter/search + status metrics + quick actions (API-backed with mock fallback). */
   const navigate = useNavigate();
 
-  const [projects] = useState(() => getMockProjectsSeed());
-  const [executions] = useState(() => getMockExecutionsSeed());
-  const [results] = useState(() => getMockResultsSeed());
+  const { data: projectsData } = useApiRequest(() => projectsApi.list(), [], { immediate: true, initialData: [] });
+  const { data: executionsData } = useApiRequest(() => executionsApi.list(), [], { immediate: true, initialData: [] });
+
+  const {
+    data: resultsData,
+    loading,
+    error,
+  } = useApiRequest(() => resultsApi.list(), [], { immediate: true, initialData: [] });
+
+  const projects = Array.isArray(projectsData) ? projectsData : [];
+  const executions = Array.isArray(executionsData) ? executionsData : [];
+  const results = Array.isArray(resultsData) ? resultsData : [];
 
   const [query, setQuery] = useState("");
   const [projectFilter, setProjectFilter] = useState("All");
@@ -158,7 +165,7 @@ export default function ResultsPage() {
           <div style={{ display: "grid", gap: 4 }}>
             <div style={{ fontWeight: 900, color: "rgba(17, 24, 39, 0.92)" }}>{r.id}</div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <Badge variant="neutral">Mock</Badge>
+              <Badge variant="neutral">{isMockModeEnabled() ? "Mock" : "API"}</Badge>
               <span style={{ fontSize: 12, color: "rgba(17, 24, 39, 0.62)", fontWeight: 800 }}>
                 Exec: {r.executionId}
               </span>
@@ -219,9 +226,9 @@ export default function ResultsPage() {
                     className="btn btn--secondary"
                     style={{ padding: "6px 10px", fontSize: 12 }}
                     onClick={() => setDownloadModal({ open: true, item: { ...a, resultId: r.id } })}
-                    aria-label={`Download ${a.name} (mock)`}
+                    aria-label={`Download ${a.name}`}
                   >
-                    Download {a.type.toUpperCase()}
+                    Download {String(a.type).toUpperCase()}
                   </button>
                 ))}
                 {items.length > 2 ? (
@@ -396,11 +403,19 @@ export default function ResultsPage() {
           </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12, alignItems: "center" }}>
-            <Badge variant="primary">Mock mode</Badge>
+            <Badge variant={isMockModeEnabled() ? "primary" : "neutral"}>
+              {isMockModeEnabled() ? "Mock mode" : "API mode"}
+            </Badge>
             <div style={{ fontSize: 13, color: "rgba(17, 24, 39, 0.72)", lineHeight: 1.45 }}>
-              Results are read from local mock data. Artifact downloads show a mock confirmation dialog.
+              Results are loaded via the centralized API layer.
             </div>
           </div>
+
+          {error ? (
+            <div style={{ marginTop: 10, fontSize: 12, color: "var(--color-error)", fontWeight: 800 }}>
+              Error: {error.message}
+            </div>
+          ) : null}
         </section>
 
         <section aria-label="Results table">
@@ -411,11 +426,13 @@ export default function ResultsPage() {
             getRowKey={(r) => r.id}
             emptyState={
               <EmptyState
-                title={results.length === 0 ? "No results yet" : "No matches"}
+                title={loading ? "Loading results…" : results.length === 0 ? "No results yet" : "No matches"}
                 description={
-                  results.length === 0
-                    ? "Run some executions to produce results."
-                    : "Try adjusting your search or filters (status, time range, project)."
+                  loading
+                    ? "Fetching results."
+                    : results.length === 0
+                      ? "Run some executions to produce results."
+                      : "Try adjusting your search or filters (status, time range, project)."
                 }
                 action={
                   results.length > 0 ? (
@@ -428,6 +445,7 @@ export default function ResultsPage() {
                         setFromTs(defaultFrom);
                         setToTs(defaultTo);
                       }}
+                      disabled={loading}
                     >
                       Reset filters
                     </Button>
@@ -448,7 +466,7 @@ export default function ResultsPage() {
 
         <Modal
           open={downloadModal.open}
-          title="Download artifact (mock)"
+          title="Download artifact"
           description={
             downloadModal.item
               ? `This will be wired to the backend later. For now, this confirms the intended action.`
@@ -463,7 +481,6 @@ export default function ResultsPage() {
               <Button
                 variant="primary"
                 onClick={() => {
-                  // Mock action: we simply close. Later this would call API and trigger browser download.
                   setDownloadModal({ open: false, item: null });
                 }}
               >
@@ -513,3 +530,4 @@ export default function ResultsPage() {
     </div>
   );
 }
+

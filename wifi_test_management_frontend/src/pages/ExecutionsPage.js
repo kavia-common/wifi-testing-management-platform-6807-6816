@@ -1,18 +1,14 @@
 import React, { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Badge, Button, EmptyState, Table, TextInput } from "../components/ui";
-import { getMockProjectsSeed } from "./projectsMockData";
-import { getMockTestCasesSeed } from "./testCasesMockData";
 import ExecutionScheduleModal from "./ExecutionScheduleModal";
 import {
   badgeVariantForExecutionStatus,
   computeExecutionProgressPercent,
   formatDateTime,
-  getMockExecutionsSeed,
-  hydrateExecutionDerivedFields,
-  makeExecutionId,
   normalizeExecutionStatus,
 } from "./executionsMockData";
+import { executionsApi, isMockModeEnabled, projectsApi, testCasesApi, useApiRequest } from "../api";
 
 function SelectField({ id, label, value, onChange, options, helperText }) {
   return (
@@ -151,14 +147,22 @@ function appendLog(execution, level, msg) {
 
 // PUBLIC_INTERFACE
 export default function ExecutionsPage() {
-  /** Executions list screen: filter/search + schedule/start actions (local mock state). */
+  /** Executions list screen: filter/search + schedule/start actions (API-backed with mock fallback). */
   const navigate = useNavigate();
 
-  const [projects] = useState(() => getMockProjectsSeed());
-  const [testCases] = useState(() => getMockTestCasesSeed());
-  const [executions, setExecutions] = useState(() =>
-    getMockExecutionsSeed().map((e) => hydrateExecutionDerivedFields(e, projects, testCases))
-  );
+  const { data: projectsData } = useApiRequest(() => projectsApi.list(), [], { immediate: true, initialData: [] });
+  const { data: testCasesData } = useApiRequest(() => testCasesApi.list(), [], { immediate: true, initialData: [] });
+
+  const {
+    data: executionsData,
+    loading,
+    error,
+    setData: setExecutions,
+  } = useApiRequest(() => executionsApi.list(), [], { immediate: true, initialData: [] });
+
+  const projects = Array.isArray(projectsData) ? projectsData : [];
+  const testCases = Array.isArray(testCasesData) ? testCasesData : [];
+  const executions = Array.isArray(executionsData) ? executionsData : [];
 
   const [query, setQuery] = useState("");
   const [projectFilter, setProjectFilter] = useState("All");
@@ -216,7 +220,7 @@ export default function ExecutionsPage() {
           <div style={{ display: "grid", gap: 4 }}>
             <div style={{ fontWeight: 900, color: "rgba(17, 24, 39, 0.92)" }}>{e.id}</div>
             <div style={{ fontSize: 12, color: "rgba(17, 24, 39, 0.62)" }}>
-              <Badge variant="neutral">Mock</Badge>
+              <Badge variant="neutral">{isMockModeEnabled() ? "Mock" : "API"}</Badge>
             </div>
           </div>
         ),
@@ -309,13 +313,19 @@ export default function ExecutionsPage() {
                 variant="primary"
                 size="sm"
                 disabled={!canStart}
-                onClick={() => {
+                onClick={async () => {
                   if (!canStart) return;
                   const nowIso = new Date().toISOString();
                   let next = { ...e, status: "Running", startedAt: nowIso };
-                  next = appendLog(next, "INFO", "Start requested from list view (mock)");
+                  next = appendLog(next, "INFO", "Start requested from list view");
                   next = appendLog(next, "INFO", "Runner acquired: lab-runner-03");
-                  setExecutions((prev) => prev.map((x) => (x.id === e.id ? hydrateExecutionDerivedFields(next, projects, testCases) : x)));
+                  try {
+                    const updated = await executionsApi.update(e.id, next);
+                    setExecutions((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+                  } catch (err) {
+                    // eslint-disable-next-line no-alert
+                    window.alert(err?.message || "Failed to start execution");
+                  }
                 }}
               >
                 Start
@@ -325,7 +335,7 @@ export default function ExecutionsPage() {
         },
       },
     ],
-    [navigate, projects, testCases]
+    [navigate, setExecutions]
   );
 
   function openScheduleEmpty() {
@@ -333,17 +343,15 @@ export default function ExecutionsPage() {
     setScheduleOpen(true);
   }
 
-  function handleScheduleSubmit(payload) {
+  async function handleScheduleSubmit(payload) {
     const nowIso = new Date().toISOString();
 
     const tc = testCases.find((t) => t.id === payload.testCaseId) || null;
     const params = mergeDefaultParameters(tc, payload.parameters);
 
-    if (payload.mode === "start") {
-      const id = makeExecutionId();
-      const next = hydrateExecutionDerivedFields(
-        {
-          id,
+    try {
+      if (payload.mode === "start") {
+        const created = await executionsApi.create({
           projectId: payload.projectId,
           testCaseId: payload.testCaseId,
           status: "Running",
@@ -351,22 +359,15 @@ export default function ExecutionsPage() {
           startedAt: nowIso,
           expectedDurationSec: 240,
           parameters: params,
-        },
-        projects,
-        testCases
-      );
+        });
 
-      setExecutions((prev) => [next, ...prev]);
-      setScheduleOpen(false);
-      navigate(`/executions/${id}`);
-      return;
-    }
+        setExecutions((prev) => [created, ...prev]);
+        setScheduleOpen(false);
+        navigate(`/executions/${created.id}`);
+        return;
+      }
 
-    // schedule
-    const id = makeExecutionId();
-    const next = hydrateExecutionDerivedFields(
-      {
-        id,
+      const created = await executionsApi.create({
         projectId: payload.projectId,
         testCaseId: payload.testCaseId,
         status: "Scheduled",
@@ -374,14 +375,15 @@ export default function ExecutionsPage() {
         scheduledAt: payload.scheduledAt,
         expectedDurationSec: 240,
         parameters: params,
-      },
-      projects,
-      testCases
-    );
+      });
 
-    setExecutions((prev) => [next, ...prev]);
-    setScheduleOpen(false);
-    navigate(`/executions/${id}`);
+      setExecutions((prev) => [created, ...prev]);
+      setScheduleOpen(false);
+      navigate(`/executions/${created.id}`);
+    } catch (e) {
+      // eslint-disable-next-line no-alert
+      window.alert(e?.message || "Failed to schedule execution");
+    }
   }
 
   return (
@@ -461,11 +463,19 @@ export default function ExecutionsPage() {
           </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12, alignItems: "center" }}>
-            <Badge variant="primary">Mock mode</Badge>
+            <Badge variant={isMockModeEnabled() ? "primary" : "neutral"}>
+              {isMockModeEnabled() ? "Mock mode" : "API mode"}
+            </Badge>
             <div style={{ fontSize: 13, color: "rgba(17, 24, 39, 0.72)", lineHeight: 1.45 }}>
-              Executions are stored in local page state for now. Later we’ll swap to API calls without changing this UI.
+              Executions are loaded via the centralized API layer.
             </div>
           </div>
+
+          {error ? (
+            <div style={{ marginTop: 10, fontSize: 12, color: "var(--color-error)", fontWeight: 800 }}>
+              Error: {error.message}
+            </div>
+          ) : null}
         </section>
 
         <section aria-label="Executions table">
@@ -476,15 +486,17 @@ export default function ExecutionsPage() {
             getRowKey={(r) => r.id}
             emptyState={
               <EmptyState
-                title={executions.length === 0 ? "No executions yet" : "No matches"}
+                title={loading ? "Loading executions…" : executions.length === 0 ? "No executions yet" : "No matches"}
                 description={
-                  executions.length === 0
-                    ? "Schedule or start your first execution to begin tracking run status and logs."
-                    : "Try adjusting your search or filters."
+                  loading
+                    ? "Fetching executions."
+                    : executions.length === 0
+                      ? "Schedule or start your first execution to begin tracking run status and logs."
+                      : "Try adjusting your search or filters."
                 }
                 action={
                   <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                    <Button variant="primary" onClick={openScheduleEmpty}>
+                    <Button variant="primary" onClick={openScheduleEmpty} disabled={loading}>
                       Schedule / Start
                     </Button>
                     {executions.length > 0 ? (
@@ -497,6 +509,7 @@ export default function ExecutionsPage() {
                           setFromDate("");
                           setToDate("");
                         }}
+                        disabled={loading}
                       >
                         Clear filters
                       </Button>
@@ -528,3 +541,4 @@ export default function ExecutionsPage() {
     </div>
   );
 }
+
