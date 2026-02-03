@@ -84,7 +84,7 @@ function matchesQuery(r, query) {
 
 // PUBLIC_INTERFACE
 export default function ResultsPage() {
-  /** Results list screen: filter/search + quick actions (local mock state). */
+  /** Results list screen: filter/search + status metrics + quick actions (local mock state). */
   const navigate = useNavigate();
 
   const [projects] = useState(() => getMockProjectsSeed());
@@ -96,13 +96,14 @@ export default function ResultsPage() {
   const [statusFilter, setStatusFilter] = useState("All");
 
   // Time range is datetime-local to match request.
-  const [fromTs, setFromTs] = useState(() => {
+  const defaultFrom = useMemo(() => {
     const d = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
-    // datetime-local expects "YYYY-MM-DDTHH:mm"
-    const iso = d.toISOString();
-    return iso.slice(0, 16);
-  });
-  const [toTs, setToTs] = useState(() => new Date().toISOString().slice(0, 16));
+    return d.toISOString().slice(0, 16);
+  }, []);
+  const defaultTo = useMemo(() => new Date().toISOString().slice(0, 16), []);
+
+  const [fromTs, setFromTs] = useState(() => defaultFrom);
+  const [toTs, setToTs] = useState(() => defaultTo);
 
   const [downloadModal, setDownloadModal] = useState({ open: false, item: null });
 
@@ -137,6 +138,15 @@ export default function ResultsPage() {
       .filter((r) => matchesResultTimeRange(r, fromIso, toIso))
       .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   }, [results, query, projectFilter, statusFilter, fromIso, toIso]);
+
+  const statusMetrics = useMemo(() => {
+    const counts = { Pass: 0, Fail: 0, Error: 0, Skipped: 0 };
+    for (const r of filtered) {
+      const s = normalizeResultStatus(r.status);
+      counts[s] = (counts[s] || 0) + 1;
+    }
+    return counts;
+  }, [filtered]);
 
   const columns = useMemo(
     () => [
@@ -276,14 +286,56 @@ export default function ResultsPage() {
                 setQuery("");
                 setProjectFilter("All");
                 setStatusFilter("All");
-                setFromTs("");
-                setToTs("");
+                setFromTs(defaultFrom);
+                setToTs(defaultTo);
               }}
             >
-              Clear filters
+              Reset
             </Button>
           </div>
         </header>
+
+        <section
+          aria-label="Results status metrics"
+          style={{
+            borderRadius: "var(--radius-lg)",
+            border: "1px solid var(--color-border)",
+            background: "rgba(255, 255, 255, 0.9)",
+            boxShadow: "var(--shadow-sm)",
+            padding: 14,
+            marginBottom: 14,
+          }}
+        >
+          <div className="grid2">
+            <div className="statCard">
+              <div className="statCard__label">Pass</div>
+              <div className="statCard__value" style={{ color: "var(--color-success)" }}>
+                {statusMetrics.Pass || 0}
+              </div>
+            </div>
+            <div className="statCard">
+              <div className="statCard__label">Fail</div>
+              <div className="statCard__value" style={{ color: "var(--color-error)" }}>
+                {statusMetrics.Fail || 0}
+              </div>
+            </div>
+            <div className="statCard">
+              <div className="statCard__label">Error</div>
+              <div className="statCard__value" style={{ color: "var(--color-error)" }}>
+                {statusMetrics.Error || 0}
+              </div>
+            </div>
+            <div className="statCard">
+              <div className="statCard__label">Skipped</div>
+              <div className="statCard__value" style={{ color: "rgba(17, 24, 39, 0.72)" }}>
+                {statusMetrics.Skipped || 0}
+              </div>
+            </div>
+          </div>
+          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(17, 24, 39, 0.62)" }}>
+            Counts reflect the current filters (project, status, and time range).
+          </div>
+        </section>
 
         <section
           aria-label="Results controls"
@@ -373,8 +425,8 @@ export default function ResultsPage() {
                         setQuery("");
                         setProjectFilter("All");
                         setStatusFilter("All");
-                        setFromTs("");
-                        setToTs("");
+                        setFromTs(defaultFrom);
+                        setToTs(defaultTo);
                       }}
                     >
                       Reset filters

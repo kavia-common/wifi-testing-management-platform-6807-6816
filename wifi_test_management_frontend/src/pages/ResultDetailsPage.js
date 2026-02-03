@@ -81,6 +81,11 @@ export default function ResultDetailsPage() {
             <div style={{ fontSize: 12, color: "rgba(17, 24, 39, 0.62)", fontWeight: 700 }}>
               {String(a.type).toUpperCase()} • {formatBytes(a.sizeBytes)}
             </div>
+            {a.hint ? (
+              <div style={{ fontSize: 12, color: "rgba(17, 24, 39, 0.62)", lineHeight: 1.45 }}>
+                {a.hint}
+              </div>
+            ) : null}
           </div>
         ),
       },
@@ -88,7 +93,11 @@ export default function ResultDetailsPage() {
         key: "createdAt",
         header: "Created",
         width: 190,
-        render: (a) => <span style={{ fontWeight: 800, color: "rgba(17, 24, 39, 0.78)" }}>{formatResultDateTime(a.createdAt)}</span>,
+        render: (a) => (
+          <span style={{ fontWeight: 800, color: "rgba(17, 24, 39, 0.78)" }}>
+            {formatResultDateTime(a.createdAt)}
+          </span>
+        ),
       },
       {
         key: "kind",
@@ -99,10 +108,22 @@ export default function ResultDetailsPage() {
       {
         key: "actions",
         header: "Actions",
-        width: 170,
+        width: 220,
         render: (a) => (
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
-            <Button variant="secondary" size="sm" onClick={() => setDownloadModal({ open: true, item: a })}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                setDownloadModal({
+                  open: true,
+                  item: { ...a, __mode: "view" },
+                })
+              }
+            >
+              View
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => setDownloadModal({ open: true, item: { ...a, __mode: "download" } })}>
               Download
             </Button>
           </div>
@@ -197,6 +218,32 @@ export default function ResultDetailsPage() {
             marginBottom: 14,
           }}
         >
+          <div
+            style={{
+              borderRadius: "var(--radius-md)",
+              border: `1px solid ${
+                status === "Pass" ? "rgba(5, 150, 105, 0.25)" : "rgba(220, 38, 38, 0.22)"
+              }`,
+              background:
+                status === "Pass" ? "rgba(5, 150, 105, 0.08)" : "rgba(220, 38, 38, 0.06)",
+              padding: 12,
+              marginBottom: 12,
+              display: "flex",
+              gap: 10,
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ fontWeight: 950, color: "rgba(17, 24, 39, 0.92)" }}>Outcome</div>
+              <Badge variant={badgeVariantForResultStatus(status)}>{status}</Badge>
+            </div>
+            <div style={{ fontSize: 13, color: "rgba(17, 24, 39, 0.72)", fontWeight: 700 }}>
+              {status === "Pass" ? "All assertions met." : "Review summary and artifacts for triage."}
+            </div>
+          </div>
+
           <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 14, alignItems: "start" }}>
             <div style={{ display: "grid", gap: 12 }}>
               <div>
@@ -418,8 +465,12 @@ export default function ResultDetailsPage() {
 
         <Modal
           open={downloadModal.open}
-          title="Download artifact (mock)"
-          description="Backend download endpoints will be wired later. This modal confirms what would be downloaded."
+          title={downloadModal.item?.__mode === "view" ? "View artifact (mock)" : "Download artifact (mock)"}
+          description={
+            downloadModal.item?.__mode === "view"
+              ? "This will be wired to an artifact viewer (logs/pcap previews, reports) later."
+              : "Backend download endpoints will be wired later. This modal confirms what would be downloaded."
+          }
           onClose={() => setDownloadModal({ open: false, item: null })}
           footer={
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
@@ -439,10 +490,11 @@ export default function ResultDetailsPage() {
                 <Badge variant={downloadModal.item.kind === "attachment" ? "secondary" : "neutral"}>
                   {downloadModal.item.kind}
                 </Badge>
+                <Badge variant="primary">{String(downloadModal.item.type).toUpperCase()}</Badge>
               </div>
 
               <div style={{ fontSize: 13, color: "rgba(17, 24, 39, 0.76)", lineHeight: 1.55, fontWeight: 650 }}>
-                {downloadModal.item.hint || "Artifact download."}
+                {downloadModal.item.hint || "Artifact/attachment."}
               </div>
 
               <div
@@ -458,16 +510,18 @@ export default function ResultDetailsPage() {
                 }}
               >
                 <div>
-                  <span style={{ fontWeight: 900, color: "rgba(17, 24, 39, 0.65)" }}>Type: </span>
-                  <span style={{ fontWeight: 800 }}>{String(downloadModal.item.type).toUpperCase()}</span>
-                </div>
-                <div>
                   <span style={{ fontWeight: 900, color: "rgba(17, 24, 39, 0.65)" }}>Size: </span>
                   <span style={{ fontWeight: 800 }}>{formatBytes(downloadModal.item.sizeBytes)}</span>
                 </div>
                 <div>
                   <span style={{ fontWeight: 900, color: "rgba(17, 24, 39, 0.65)" }}>Created: </span>
                   <span style={{ fontWeight: 800 }}>{formatResultDateTime(downloadModal.item.createdAt)}</span>
+                </div>
+                <div>
+                  <span style={{ fontWeight: 900, color: "rgba(17, 24, 39, 0.65)" }}>Action: </span>
+                  <span style={{ fontWeight: 800 }}>
+                    {downloadModal.item.__mode === "view" ? "View" : "Download"}
+                  </span>
                 </div>
               </div>
             </div>
