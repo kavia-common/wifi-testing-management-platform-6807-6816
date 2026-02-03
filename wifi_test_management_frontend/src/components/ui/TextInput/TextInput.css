@@ -1,0 +1,66 @@
+.uiField {
+  display: grid;
+  gap: 6px;
+}
+
+.uiField__label {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(17, 24, 39, 0.62);
+}
+
+.uiField__help {
+  font-size: 12px;
+  color: rgba(17, 24, 39, 0.65);
+  line-height: 1.4;
+}
+
+.uiField__error {
+  font-size: 12px;
+  color: var(--color-error);
+  line-height: 1.4;
+  font-weight: 700;
+}
+
+.uiTextInput {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 12px;
+  border: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.9);
+  padding: 10px 12px;
+  box-shadow: var(--shadow-sm);
+}
+
+.uiTextInput--disabled {
+  opacity: 0.65;
+}
+
+.uiTextInput--error {
+  border-color: rgba(220, 38, 38, 0.28);
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.12);
+}
+
+.uiTextInput__icon {
+  display: inline-flex;
+  align-items: center;
+  color: rgba(17, 24, 39, 0.55);
+}
+
+.uiTextInput__control {
+  border: none;
+  outline: none;
+  background: transparent;
+  width: 100%;
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(17, 24, 39, 0.88);
+}
+
+.uiTextInput__control::placeholder {
+  color: rgba(17, 24, 39, 0.45);
+  font-weight: 600;
+}

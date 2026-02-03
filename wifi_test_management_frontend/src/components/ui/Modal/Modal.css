@@ -1,0 +1,90 @@
+.uiModalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(17, 24, 39, 0.42);
+  backdrop-filter: blur(6px);
+  display: grid;
+  place-items: center;
+  padding: 18px;
+}
+
+.uiModal {
+  width: min(720px, calc(100vw - 36px));
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+.uiModal--sm {
+  width: min(520px, calc(100vw - 36px));
+}
+
+.uiModal--md {
+  width: min(720px, calc(100vw - 36px));
+}
+
+.uiModal--lg {
+  width: min(920px, calc(100vw - 36px));
+}
+
+.uiModal__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 14px 10px 14px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.uiModal__titleBlock {
+  display: grid;
+  gap: 6px;
+}
+
+.uiModal__title {
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: -0.01em;
+  color: rgba(17, 24, 39, 0.92);
+}
+
+.uiModal__description {
+  font-size: 13px;
+  color: rgba(17, 24, 39, 0.72);
+  line-height: 1.5;
+}
+
+.uiModal__close {
+  appearance: none;
+  border: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.85);
+  color: rgba(17, 24, 39, 0.78);
+  border-radius: 12px;
+  width: 34px;
+  height: 34px;
+  cursor: pointer;
+  font-weight: 900;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.uiModal__close:hover {
+  background: rgba(30, 58, 138, 0.07);
+  border-color: rgba(30, 58, 138, 0.14);
+}
+
+.uiModal__body {
+  padding: 14px;
+}
+
+.uiModal__footer {
+  padding: 12px 14px 14px 14px;
+  border-top: 1px solid var(--color-border);
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}

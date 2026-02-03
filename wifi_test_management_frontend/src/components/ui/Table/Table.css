@@ -1,0 +1,55 @@
+.uiTableWrap {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.uiTableScroll {
+  overflow: auto;
+  width: 100%;
+}
+
+.uiTable {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 640px; /* makes scroll kick in on small screens */
+}
+
+.uiTable__head {
+  background: rgba(30, 58, 138, 0.06);
+}
+
+.uiTable__th {
+  text-align: left;
+  padding: 12px 12px;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(17, 24, 39, 0.65);
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.uiTable__td {
+  padding: 12px 12px;
+  font-size: 13px;
+  color: rgba(17, 24, 39, 0.82);
+  border-bottom: 1px solid rgba(17, 24, 39, 0.06);
+  vertical-align: middle;
+}
+
+.uiTable__tr:nth-child(even) .uiTable__td {
+  background: rgba(17, 24, 39, 0.02);
+}
+
+.uiTable__tr:hover .uiTable__td {
+  background: rgba(30, 58, 138, 0.06);
+}
+
+.uiTableEmpty {
+  padding: 14px;
+}

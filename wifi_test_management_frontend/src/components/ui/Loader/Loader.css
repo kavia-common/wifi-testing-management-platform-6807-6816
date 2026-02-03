@@ -1,0 +1,53 @@
+.uiLoader {
+  color: rgba(17, 24, 39, 0.75);
+  font-size: 13px;
+  font-weight: 700;
+  gap: 10px;
+}
+
+.uiLoader--block {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  padding: 14px 10px;
+}
+
+.uiLoader--inline {
+  display: inline-flex;
+  align-items: center;
+}
+
+.uiLoader__ring {
+  border-radius: 999px;
+  border: 3px solid rgba(30, 58, 138, 0.18);
+  border-top-color: var(--color-primary);
+  animation: uiSpin 900ms linear infinite;
+}
+
+.uiLoader__ring--sm {
+  width: 16px;
+  height: 16px;
+  border-width: 2px;
+}
+
+.uiLoader__ring--md {
+  width: 22px;
+  height: 22px;
+  border-width: 3px;
+}
+
+.uiLoader__ring--lg {
+  width: 28px;
+  height: 28px;
+  border-width: 3px;
+}
+
+.uiLoader__text {
+  line-height: 1.3;
+}
+
+@keyframes uiSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}

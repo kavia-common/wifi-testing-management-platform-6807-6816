@@ -1,0 +1,36 @@
+.uiBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  border: 1px solid var(--color-border);
+  background: rgba(17, 24, 39, 0.06);
+  color: rgba(17, 24, 39, 0.72);
+}
+
+.uiBadge--primary {
+  background: rgba(30, 58, 138, 0.12);
+  border-color: rgba(30, 58, 138, 0.18);
+  color: var(--color-primary);
+}
+
+.uiBadge--secondary {
+  background: rgba(245, 158, 11, 0.14);
+  border-color: rgba(245, 158, 11, 0.22);
+  color: #7a4a00;
+}
+
+.uiBadge--success {
+  background: rgba(5, 150, 105, 0.14);
+  border-color: rgba(5, 150, 105, 0.22);
+  color: #0b5c45;
+}
+
+.uiBadge--error {
+  background: rgba(220, 38, 38, 0.12);
+  border-color: rgba(220, 38, 38, 0.22);
+  color: #7f1d1d;
+}
