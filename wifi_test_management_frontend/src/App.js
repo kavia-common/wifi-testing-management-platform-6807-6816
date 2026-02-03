@@ -9,6 +9,7 @@ import ProjectDetailsPage from "./pages/ProjectDetailsPage";
 import TestCasesPage from "./pages/TestCasesPage";
 import TestCaseDetailsPage from "./pages/TestCaseDetailsPage";
 import ExecutionsPage from "./pages/ExecutionsPage";
+import ExecutionDetailsPage from "./pages/ExecutionDetailsPage";
 import ResultsPage from "./pages/ResultsPage";
 import SettingsPage from "./pages/SettingsPage";
 
@@ -35,6 +36,7 @@ function App() {
         <Route path="/test-cases" element={<TestCasesPage />} />
         <Route path="/test-cases/:testCaseId" element={<TestCaseDetailsPage />} />
         <Route path="/executions" element={<ExecutionsPage />} />
+        <Route path="/executions/:executionId" element={<ExecutionDetailsPage />} />
         <Route path="/results" element={<ResultsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
 
