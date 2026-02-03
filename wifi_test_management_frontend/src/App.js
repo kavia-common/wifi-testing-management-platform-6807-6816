@@ -11,6 +11,7 @@ import TestCaseDetailsPage from "./pages/TestCaseDetailsPage";
 import ExecutionsPage from "./pages/ExecutionsPage";
 import ExecutionDetailsPage from "./pages/ExecutionDetailsPage";
 import ResultsPage from "./pages/ResultsPage";
+import ResultDetailsPage from "./pages/ResultDetailsPage";
 import SettingsPage from "./pages/SettingsPage";
 
 // PUBLIC_INTERFACE
@@ -38,6 +39,7 @@ function App() {
         <Route path="/executions" element={<ExecutionsPage />} />
         <Route path="/executions/:executionId" element={<ExecutionDetailsPage />} />
         <Route path="/results" element={<ResultsPage />} />
+        <Route path="/results/:resultId" element={<ResultDetailsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
 
         {/* Fallback */}
