@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Badge, Button, EmptyState, Table, TextInput, Toast } from "../components/ui";
+import { Badge, Button, EmptyState, Modal, Table, TextInput, Toast } from "../components/ui";
 import {
   deriveUsageForNewTestCase,
   formatDateTime,
@@ -11,6 +11,7 @@ import TestCaseUpsertModal from "./TestCaseUpsertModal";
 import { isMockModeEnabled, projectsApi, testCasesApi, useApiRequest } from "../api";
 import { isMockImportEnabled } from "../utils/mockImportSettings";
 import { parseTestPlanFile } from "../utils/testPlanParser";
+import { fetchArrayBufferFromUrl } from "../utils/assetLoader";
 
 function getProjectName(projects, projectId) {
   return projects.find((p) => p.id === projectId)?.name || "Unknown project";
@@ -134,6 +135,10 @@ export default function TestCasesPage() {
   const [importing, setImporting] = useState(false);
   const [toasts, setToasts] = useState([]);
 
+  const [assetImportOpen, setAssetImportOpen] = useState(false);
+  const [assetUrl, setAssetUrl] = useState("");
+  const [assetLoading, setAssetLoading] = useState(false);
+
   function pushToast({ variant, title, message, ttlMs = 4500 }) {
     const id = `t-${Math.floor(Math.random() * 1e9)}`;
     const toast = { id, variant: variant || "info", title: title || "Notice", message: message || "" };
@@ -141,6 +146,99 @@ export default function TestCasesPage() {
     window.setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, ttlMs);
+  }
+
+  function getImportUnavailableReason() {
+    if (!isMockModeEnabled()) {
+      return "Import unavailable in API mode. Enable Mock mode in Settings to use TestPlan imports.";
+    }
+    if (!isMockImportEnabled()) {
+      return "Mock imports are disabled. Enable “Use mock TestPlan imports” in Settings.";
+    }
+    return "";
+  }
+
+  function openAssetImport() {
+    const reason = getImportUnavailableReason();
+    if (reason) {
+      pushToast({ variant: "error", title: "Import unavailable", message: reason });
+      return;
+    }
+    setAssetImportOpen(true);
+  }
+
+  function inferFileNameFromUrl(url) {
+    const s = String(url || "");
+    const cut = Math.min(
+      s.indexOf("?") === -1 ? s.length : s.indexOf("?"),
+      s.indexOf("#") === -1 ? s.length : s.indexOf("#")
+    );
+    const clean = s.slice(0, cut);
+    const lastSlash = clean.lastIndexOf("/");
+    return lastSlash === -1 ? clean : clean.slice(lastSlash + 1);
+  }
+
+  async function handleImportFromAssetUrl() {
+    const reason = getImportUnavailableReason();
+    if (reason) {
+      pushToast({ variant: "error", title: "Import unavailable", message: reason });
+      return;
+    }
+
+    const url = String(assetUrl || "").trim();
+    if (!url) {
+      pushToast({ variant: "error", title: "Missing URL", message: "Paste an asset URL to load (Excel .xlsx supported)." });
+      return;
+    }
+
+    setAssetLoading(true);
+    try {
+      const { arrayBuffer, extensionHint, fileNameHint } = await fetchArrayBufferFromUrl(url);
+
+      const nameHint = fileNameHint || inferFileNameFromUrl(url) || "TestPlan.xlsx";
+      const ext = String(extensionHint || "").toLowerCase();
+
+      if (ext !== "xlsx" && !String(nameHint).toLowerCase().endsWith(".xlsx")) {
+        throw new Error("Unsupported asset type. Please provide an Excel .xlsx TestPlan URL.");
+      }
+
+      // Route through the existing parser by creating a File, so we reuse the exact pipeline.
+      const file = new File([arrayBuffer], nameHint.endsWith(".xlsx") ? nameHint : `${nameHint}.xlsx`, {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+
+      const { items, warnings } = await parseTestPlanFile(file, {
+        defaultProjectId: projects?.[0]?.id || "",
+      });
+
+      if (warnings?.length) {
+        for (const w of warnings) {
+          pushToast({ variant: "info", title: "Import note", message: w, ttlMs: 5200 });
+        }
+      }
+
+      const res = await testCasesApi.importTestPlan(items);
+
+      pushToast({
+        variant: "success",
+        title: "TestPlan imported",
+        message: `Added ${res.added}, updated ${res.updated}, skipped ${res.skipped}.`,
+      });
+
+      setAssetImportOpen(false);
+      await refreshListAfterImport();
+    } catch (e) {
+      pushToast({
+        variant: "error",
+        title: "Import failed (Project Asset)",
+        message:
+          e?.message ||
+          "Unable to import asset. Ensure it is a publicly accessible Excel .xlsx TestPlan URL (mock mode only).",
+        ttlMs: 8000,
+      });
+    } finally {
+      setAssetLoading(false);
+    }
   }
 
   const editingTestCase = useMemo(() => testCases.find((tc) => tc.id === editingId) || null, [editingId, testCases]);
@@ -390,7 +488,8 @@ export default function TestCasesPage() {
             <h1 className="page__title">Test Cases</h1>
             <p className="page__subtitle">
               Manage your test case library with project associations, searchable tags, and runtime parameters. Import
-              TestPlans from CSV, Excel (.xlsx), or JSON.
+              TestPlans from CSV, Excel (.xlsx), or JSON. In mock mode, you can also import directly from a Project
+              Assets document URL.
             </p>
           </div>
 
@@ -405,10 +504,21 @@ export default function TestCasesPage() {
             <Button
               variant="ghost"
               onClick={() => fileInputRef.current?.click()}
-              disabled={loading || importing}
+              disabled={loading || importing || Boolean(getImportUnavailableReason())}
+              title={getImportUnavailableReason() || "Import a TestPlan file (mock mode only)."}
             >
               {importing ? "Importing…" : "Import TestPlan"}
             </Button>
+
+            <Button
+              variant="secondary"
+              onClick={openAssetImport}
+              disabled={loading || importing || assetLoading || Boolean(getImportUnavailableReason())}
+              title={getImportUnavailableReason() || "Import a TestPlan from a Project Asset URL (mock mode only)."}
+            >
+              Import from Project Assets
+            </Button>
+
             <Button variant="primary" onClick={openCreate} disabled={loading}>
               Create Test Case
             </Button>
@@ -537,6 +647,55 @@ export default function TestCasesPage() {
           onClose={() => setModalOpen(false)}
           onSave={handleSave}
         />
+
+        <Modal
+          open={assetImportOpen}
+          title="Import from Project Assets"
+          description="Mock mode only. Paste a Project Assets → Documents URL to an Excel (.xlsx) TestPlan and import it into the mock store."
+          onClose={() => {
+            if (assetLoading) return;
+            setAssetImportOpen(false);
+          }}
+          footer={
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
+              <Button
+                variant="ghost"
+                onClick={() => setAssetImportOpen(false)}
+                disabled={assetLoading}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                onClick={handleImportFromAssetUrl}
+                loading={assetLoading}
+                disabled={assetLoading}
+              >
+                Load & Import
+              </Button>
+            </div>
+          }
+        >
+          <TextInput
+            label="Asset URL"
+            value={assetUrl}
+            onChange={(e) => setAssetUrl(e.target.value)}
+            placeholder="https://…/WiFi%20Function%20TestPlan.xlsx"
+            ariaLabel="Project Asset URL"
+            helperText={
+              getImportUnavailableReason()
+                ? `Import unavailable: ${getImportUnavailableReason()}`
+                : "Tip: The URL must be accessible from your browser (CORS/public access)."
+            }
+            disabled={assetLoading}
+            autoComplete="off"
+            inputMode="url"
+          />
+          <div style={{ fontSize: 12, color: "rgba(17, 24, 39, 0.62)", marginTop: 10, lineHeight: 1.45 }}>
+            Supported format: Excel <span style={{ fontWeight: 900 }}>.xlsx</span>. If the URL cannot be fetched due to
+            CORS restrictions, download the file locally and use “Import TestPlan”.
+          </div>
+        </Modal>
       </div>
     </div>
   );
