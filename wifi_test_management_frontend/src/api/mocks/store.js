@@ -4,6 +4,7 @@ import {
   getMockTestCasesSeed,
   makeTestCaseId,
 } from "../../pages/testCasesMockData";
+import { stableTestCaseKey } from "../../utils/testPlanParser";
 import {
   getMockExecutionsSeed,
   hydrateExecutionDerivedFields,
@@ -169,6 +170,105 @@ export async function mockDeleteProject(id) {
 }
 
 /* -------------------- Test Cases -------------------- */
+
+// PUBLIC_INTERFACE
+export async function mockImportTestCases(items) {
+  /**
+   * Imports and persists a batch of test cases into the mock store.
+   * - Merges with existing entries
+   * - De-duplicates by stable key (projectId + name)
+   * - Never removes existing entries
+   *
+   * Returns: { added: number, updated: number, skipped: number, total: number }
+   */
+  await delay();
+
+  const list = Array.isArray(items) ? items : [];
+  if (list.length === 0) {
+    return { added: 0, updated: 0, skipped: 0, total: inMemory.state.testCases.length };
+  }
+
+  // Index existing by stable key
+  const existingByKey = new Map();
+  for (const tc of inMemory.state.testCases) {
+    existingByKey.set(stableTestCaseKey(tc), tc);
+  }
+
+  let added = 0;
+  let updated = 0;
+  let skipped = 0;
+
+  const now = nowIso();
+
+  for (const incomingRaw of list) {
+    const incoming = incomingRaw && typeof incomingRaw === "object" ? incomingRaw : null;
+    if (!incoming) {
+      skipped += 1;
+      continue;
+    }
+
+    const key = stableTestCaseKey(incoming);
+    if (!key.includes("::") || key.endsWith("::")) {
+      skipped += 1;
+      continue;
+    }
+
+    const existing = existingByKey.get(key);
+    if (existing) {
+      // Merge: preserve existing.id, createdAt; update description/tags/params if provided.
+      const next = {
+        ...existing,
+        name: String(incoming.name || existing.name),
+        projectId: String(incoming.projectId || existing.projectId),
+        description: String(incoming.description ?? existing.description ?? ""),
+        tags: Array.isArray(incoming.tags) ? incoming.tags : existing.tags || [],
+        parameters: Array.isArray(incoming.parameters) ? incoming.parameters : existing.parameters || [],
+        usage: existing.usage || incoming.usage || deriveUsageForNewTestCase(),
+        updatedAt: now,
+      };
+
+      inMemory.state.testCases = inMemory.state.testCases.map((t) => (t.id === existing.id ? next : t));
+      existingByKey.set(key, next);
+      updated += 1;
+      continue;
+    }
+
+    const id = incoming.id || makeTestCaseId();
+    const usage = incoming.usage || deriveUsageForNewTestCase();
+
+    const tc = {
+      id,
+      name: String(incoming.name || "Imported test case"),
+      description: String(incoming.description || ""),
+      projectId: String(incoming.projectId || ""),
+      tags: Array.isArray(incoming.tags) ? incoming.tags : [],
+      parameters: Array.isArray(incoming.parameters) ? incoming.parameters : [],
+      usage,
+      createdAt: incoming.createdAt || now,
+      updatedAt: now,
+    };
+
+    inMemory.state.testCases = [tc, ...inMemory.state.testCases];
+    existingByKey.set(key, tc);
+    added += 1;
+
+    // Best-effort update project counts
+    inMemory.state.projects = inMemory.state.projects.map((p) => {
+      if (String(p.id) !== String(tc.projectId)) return p;
+      return {
+        ...p,
+        updatedAt: now,
+        counts: {
+          ...(p.counts || {}),
+          testCases: (p.counts?.testCases ?? 0) + 1,
+        },
+      };
+    });
+  }
+
+  persist();
+  return { added, updated, skipped, total: inMemory.state.testCases.length };
+}
 
 // PUBLIC_INTERFACE
 export async function mockListTestCases() {

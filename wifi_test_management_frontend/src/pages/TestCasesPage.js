@@ -1,6 +1,6 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Badge, Button, EmptyState, Table, TextInput } from "../components/ui";
+import { Badge, Button, EmptyState, Table, TextInput, Toast } from "../components/ui";
 import {
   deriveUsageForNewTestCase,
   formatDateTime,
@@ -9,6 +9,8 @@ import {
 } from "./testCasesMockData";
 import TestCaseUpsertModal from "./TestCaseUpsertModal";
 import { isMockModeEnabled, projectsApi, testCasesApi, useApiRequest } from "../api";
+import { isMockImportEnabled } from "../utils/mockImportSettings";
+import { parseTestPlanFile } from "../utils/testPlanParser";
 
 function getProjectName(projects, projectId) {
   return projects.find((p) => p.id === projectId)?.name || "Unknown project";
@@ -127,6 +129,19 @@ export default function TestCasesPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState("create"); // "create" | "edit"
   const [editingId, setEditingId] = useState(null);
+
+  const fileInputRef = useRef(null);
+  const [importing, setImporting] = useState(false);
+  const [toasts, setToasts] = useState([]);
+
+  function pushToast({ variant, title, message, ttlMs = 4500 }) {
+    const id = `t-${Math.floor(Math.random() * 1e9)}`;
+    const toast = { id, variant: variant || "info", title: title || "Notice", message: message || "" };
+    setToasts((prev) => [toast, ...prev].slice(0, 4));
+    window.setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, ttlMs);
+  }
 
   const editingTestCase = useMemo(() => testCases.find((tc) => tc.id === editingId) || null, [editingId, testCases]);
 
@@ -304,8 +319,69 @@ export default function TestCasesPage() {
     }
   }
 
+  async function refreshListAfterImport() {
+    const latest = await testCasesApi.list();
+    setTestCases(Array.isArray(latest) ? latest : []);
+  }
+
+  async function handleImportFileSelected(file) {
+    if (!file) return;
+
+    if (!isMockModeEnabled()) {
+      pushToast({
+        variant: "error",
+        title: "Import unavailable",
+        message: "Enable Mock mode to import a TestPlan (API mode import is not implemented yet).",
+      });
+      return;
+    }
+
+    if (!isMockImportEnabled()) {
+      pushToast({
+        variant: "error",
+        title: "Mock import disabled",
+        message: "Enable “Use mock TestPlan imports” in Settings to import files into the mock store.",
+      });
+      return;
+    }
+
+    setImporting(true);
+    try {
+      const { items, warnings } = await parseTestPlanFile(file, {
+        defaultProjectId: projects?.[0]?.id || "",
+      });
+
+      if (warnings?.length) {
+        for (const w of warnings) {
+          pushToast({ variant: "info", title: "Import note", message: w, ttlMs: 5200 });
+        }
+      }
+
+      const res = await testCasesApi.importTestPlan(items);
+
+      pushToast({
+        variant: "success",
+        title: "TestPlan imported",
+        message: `Added ${res.added}, updated ${res.updated}, skipped ${res.skipped}.`,
+      });
+
+      await refreshListAfterImport();
+    } catch (e) {
+      pushToast({
+        variant: "error",
+        title: "Import failed",
+        message: e?.message || "Unable to import file. Please check format and required columns.",
+        ttlMs: 7000,
+      });
+    } finally {
+      setImporting(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
   return (
     <div className="page">
+      <Toast toasts={toasts} onDismiss={(id) => setToasts((prev) => prev.filter((t) => t.id !== id))} />
       <div className="pageCard">
         <header className="page__header">
           <div>
@@ -316,6 +392,20 @@ export default function TestCasesPage() {
           </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,.xlsx,.xls,.json,text/csv,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+              style={{ display: "none" }}
+              onChange={(e) => handleImportFileSelected(e.target.files?.[0] || null)}
+            />
+            <Button
+              variant="ghost"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={loading || importing}
+            >
+              {importing ? "Importing…" : "Import TestPlan"}
+            </Button>
             <Button variant="primary" onClick={openCreate} disabled={loading}>
               Create Test Case
             </Button>
@@ -372,6 +462,11 @@ export default function TestCasesPage() {
             <Badge variant={isMockModeEnabled() ? "primary" : "neutral"}>
               {isMockModeEnabled() ? "Mock mode" : "API mode"}
             </Badge>
+            {isMockModeEnabled() ? (
+              <Badge variant={isMockImportEnabled() ? "success" : "secondary"}>
+                {isMockImportEnabled() ? "Mock imports on" : "Mock imports off"}
+              </Badge>
+            ) : null}
             <div style={{ fontSize: 13, color: "rgba(17, 24, 39, 0.72)", lineHeight: 1.45 }}>
               Test cases are loaded via the centralized API layer.
             </div>

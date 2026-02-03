@@ -3,6 +3,7 @@ import {
   mockCreateTestCase,
   mockDeleteTestCase,
   mockGetTestCase,
+  mockImportTestCases,
   mockListTestCases,
   mockUpdateTestCase,
 } from "./mocks/store";
@@ -39,6 +40,17 @@ export const testCasesApi = {
   delete: async (id) => {
     if (isMockModeEnabled()) return mockDeleteTestCase(id);
     return apiDelete(`${BASE_PATH}/${encodeURIComponent(id)}`);
+  },
+
+  /** Imports test cases parsed from a TestPlan file (mock-mode only for now). */
+  importTestPlan: async (items) => {
+    if (isMockModeEnabled()) return mockImportTestCases(items);
+    throw {
+      type: "http",
+      status: 501,
+      message: "TestPlan import is not implemented for API mode yet. Enable Mock mode to use this feature.",
+      details: { hint: "Toggle mock mode in Settings." },
+    };
   },
 };
 
