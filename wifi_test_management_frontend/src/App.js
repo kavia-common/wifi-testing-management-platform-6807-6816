@@ -1,48 +1,43 @@
-import React, { useState, useEffect } from 'react';
-import logo from './logo.svg';
-import './App.css';
+import React from "react";
+import { Navigate, Route, Routes } from "react-router-dom";
+import AppLayout from "./components/AppLayout/AppLayout";
+import "./App.css";
+
+import DashboardPage from "./pages/DashboardPage";
+import ProjectsPage from "./pages/ProjectsPage";
+import TestCasesPage from "./pages/TestCasesPage";
+import ExecutionsPage from "./pages/ExecutionsPage";
+import ResultsPage from "./pages/ResultsPage";
+import SettingsPage from "./pages/SettingsPage";
 
 // PUBLIC_INTERFACE
 function App() {
-  const [theme, setTheme] = useState('light');
-
-  // Effect to apply theme to document element
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-  }, [theme]);
-
-  // PUBLIC_INTERFACE
-  const toggleTheme = () => {
-    setTheme(prevTheme => prevTheme === 'light' ? 'dark' : 'light');
-  };
-
+  /**
+   * Application entry UI: sets up client-side routes and wraps pages in
+   * the global header/sidebar layout.
+   *
+   * Routes:
+   *  - /            Dashboard
+   *  - /projects    Projects
+   *  - /test-cases  Test Cases
+   *  - /executions  Executions
+   *  - /results     Results
+   *  - /settings    Settings
+   */
   return (
-    <div className="App">
-      <header className="App-header">
-        <button 
-          className="theme-toggle" 
-          onClick={toggleTheme}
-          aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
-        >
-          {theme === 'light' ? '🌙 Dark' : '☀️ Light'}
-        </button>
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
-        </p>
-        <p>
-          Current theme: <strong>{theme}</strong>
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
-    </div>
+    <AppLayout>
+      <Routes>
+        <Route path="/" element={<DashboardPage />} />
+        <Route path="/projects" element={<ProjectsPage />} />
+        <Route path="/test-cases" element={<TestCasesPage />} />
+        <Route path="/executions" element={<ExecutionsPage />} />
+        <Route path="/results" element={<ResultsPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
+
+        {/* Fallback */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </AppLayout>
   );
 }
 
