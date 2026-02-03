@@ -66,6 +66,25 @@ describe("testPlanParser", () => {
     expect(summary.missingHeaders || []).toEqual([]);
   });
 
+  test("supports exact WiFi Function TestPlan header variant: Project/Project Name", async () => {
+    const csv = [
+      "ID,Test Case Name,Project/Project Name,Expected Result,Tags",
+      "TC-9,Connect 2.4G,WiFi Function Test,OK,smoke",
+    ].join("\n");
+
+    const file = makeTextFile("wifi-plan.csv", csv);
+    const { items, summary } = await parseTestPlanFile(file, { defaultProjectId: "" });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      id: "TC-9",
+      name: "Connect 2.4G",
+      projectId: "WiFi Function Test",
+    });
+
+    expect(summary.missingHeaders || []).toEqual([]);
+  });
+
   test("does not fail entire import if some rows are missing Project (skips invalid rows and reports counts)", async () => {
     const csv = [
       "用例名,项目,标签",

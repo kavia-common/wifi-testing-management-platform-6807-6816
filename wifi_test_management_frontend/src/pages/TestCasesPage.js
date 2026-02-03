@@ -521,13 +521,21 @@ export default function TestCasesPage() {
 
       await refreshListAfterImport();
     } catch (e) {
+      const rawMsg =
+        e?.message ||
+        "Unable to import file. Ensure it contains required columns/values for Name and Project (supports Excel .xlsx).";
+
+      // Make the toast more actionable: users typically need to fix headers.
+      const looksLikeHeaderIssue =
+        /missing headers|could not find any values for name|could not find any values for project|required columns/i.test(rawMsg);
+
       pushToast({
         variant: "error",
-        title: "Import failed (TestPlan)",
-        message:
-          e?.message ||
-          "Unable to import file. Ensure it contains required columns/values for Name and Project (supports Excel .xlsx).",
-        ttlMs: 8000,
+        title: looksLikeHeaderIssue ? "Import failed: header mismatch" : "Import failed (TestPlan)",
+        message: looksLikeHeaderIssue
+          ? `${rawMsg} Tip: Confirm the header row contains “Test Case Name” and “Project/Project Name” (or Chinese equivalents like 用例名称/项目).`
+          : rawMsg,
+        ttlMs: 10000,
       });
     } finally {
       setImporting(false);

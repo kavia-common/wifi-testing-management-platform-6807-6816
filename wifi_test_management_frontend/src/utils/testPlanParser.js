@@ -118,6 +118,12 @@ const HEADER_ALIASES = {
     "testitem",
     "function",
     "feature",
+
+    // Exact/common WiFi Function TestPlan variants (as seen in user templates)
+    "Test Item",
+    "Test Item Name",
+    "Test Case Name",
+
     // Chinese (simplified/traditional variants)
     "用例名称",
     "测试用例名称",
@@ -139,6 +145,8 @@ const HEADER_ALIASES = {
    * - Project / 项目 / 專案 / 項目
    * - "Project Name"
    * - "产品/产品线" sometimes used to indicate project/product line
+   *
+   * Added: exact variants found in the WiFi Function TestPlan.xlsx header row screenshot.
    */
   project: [
     "projectid",
@@ -148,6 +156,13 @@ const HEADER_ALIASES = {
     "suite",
     "plan",
     "planname",
+
+    // Exact/common WiFi Function TestPlan variants
+    "Project/Project Name",
+    "Project / Project Name",
+    "Project（Project Name）",
+    "Project(Project Name)",
+
     // Chinese simplified
     "项目",
     "项目名称",
