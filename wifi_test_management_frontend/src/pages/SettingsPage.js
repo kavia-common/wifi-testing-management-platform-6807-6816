@@ -24,7 +24,9 @@ function ToggleRow({ title, description, value, onChange, rightHint }) {
         <div style={{ fontSize: 13, color: "rgba(17, 24, 39, 0.72)", lineHeight: 1.45, maxWidth: 680 }}>
           {description}
         </div>
-        {rightHint ? <div style={{ fontSize: 12, color: "rgba(17, 24, 39, 0.62)", fontWeight: 800 }}>{rightHint}</div> : null}
+        {rightHint ? (
+          <div style={{ fontSize: 12, color: "rgba(17, 24, 39, 0.62)", fontWeight: 800 }}>{rightHint}</div>
+        ) : null}
       </div>
 
       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
@@ -54,6 +56,7 @@ export default function SettingsPage() {
   }
 
   function handleToggleMockImports(next) {
+    // Writes canonical + legacy keys (see utils/mockImportSettings.js) and broadcasts changes.
     setMockImportEnabled(next);
     setMockImports(next);
   }
@@ -79,10 +82,10 @@ export default function SettingsPage() {
 
           <ToggleRow
             title="Use mock TestPlan imports"
-            description="When enabled (and Mock mode is on), importing a TestPlan file on the Test Cases page will persist parsed items into the mock store and they will appear in the Test Cases list."
+            description="When enabled, importing a TestPlan file on the Test Cases page will persist parsed items into the store and they will appear in the Test Cases list."
             value={mockImports}
             onChange={handleToggleMockImports}
-            rightHint="If disabled, TestPlan imports are blocked to prevent local mock store changes."
+            rightHint="If disabled, TestPlan imports are blocked to prevent unintended local store changes."
           />
 
           <div
@@ -99,12 +102,14 @@ export default function SettingsPage() {
             <div style={{ fontWeight: 900, marginBottom: 6, color: "rgba(17, 24, 39, 0.9)" }}>Import format tips</div>
             <div style={{ display: "grid", gap: 6 }}>
               <div>
-                CSV/XLSX columns supported: <span style={{ fontWeight: 900 }}>name</span>, <span style={{ fontWeight: 900 }}>projectId</span> (or{" "}
-                <span style={{ fontWeight: 900 }}>project</span>), optional <span style={{ fontWeight: 900 }}>description</span>,{" "}
-                <span style={{ fontWeight: 900 }}>tags</span>, <span style={{ fontWeight: 900 }}>parameters</span>.
+                CSV/XLSX columns supported: <span style={{ fontWeight: 900 }}>name</span>,{" "}
+                <span style={{ fontWeight: 900 }}>projectId</span> (or <span style={{ fontWeight: 900 }}>project</span>
+                ), optional <span style={{ fontWeight: 900 }}>description</span>, <span style={{ fontWeight: 900 }}>tags</span>,{" "}
+                <span style={{ fontWeight: 900 }}>parameters</span>.
               </div>
               <div>
-                Dedupe key: <span style={{ fontWeight: 900 }}>projectId + name</span> (case-insensitive). Existing mock entries are never removed.
+                Dedupe key: <span style={{ fontWeight: 900 }}>projectId + name</span> (case-insensitive). Existing entries are
+                never removed.
               </div>
             </div>
           </div>

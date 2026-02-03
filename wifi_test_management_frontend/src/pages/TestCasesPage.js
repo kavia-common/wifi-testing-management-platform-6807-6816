@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Badge, Button, EmptyState, Modal, Table, TextInput, Toast } from "../components/ui";
 import {
@@ -9,7 +9,11 @@ import {
 } from "./testCasesMockData";
 import TestCaseUpsertModal from "./TestCaseUpsertModal";
 import { isMockModeEnabled, projectsApi, testCasesApi, useApiRequest } from "../api";
-import { isMockImportEnabled } from "../utils/mockImportSettings";
+import {
+  getMockImportDebugInfo,
+  isMockImportEnabled,
+  subscribeToMockImportChanges,
+} from "../utils/mockImportSettings";
 import { parseTestPlanFile } from "../utils/testPlanParser";
 import { fetchArrayBufferFromUrl } from "../utils/assetLoader";
 
@@ -139,6 +143,32 @@ export default function TestCasesPage() {
   const [assetUrl, setAssetUrl] = useState("");
   const [assetLoading, setAssetLoading] = useState(false);
 
+  // Reactive mock-import detection:
+  // - reads on mount from localStorage (including legacy keys)
+  // - listens for storage changes (cross-tab) and in-tab broadcast events
+  // - also includes env fallback (REACT_APP_USE_MOCKS === 'true' => enabled)
+  const [mockImportEnabled, setMockImportEnabledState] = useState(isMockImportEnabled());
+  const [mockImportDebug, setMockImportDebug] = useState(getMockImportDebugInfo());
+
+  useEffect(() => {
+    function refresh() {
+      setMockImportEnabledState(isMockImportEnabled());
+      setMockImportDebug(getMockImportDebugInfo());
+    }
+
+    refresh();
+    const unsubscribe = subscribeToMockImportChanges(refresh);
+
+    // Also refresh on focus (common case: user toggles in another tab/app then returns).
+    const onFocus = () => refresh();
+    window.addEventListener("focus", onFocus);
+
+    return () => {
+      unsubscribe?.();
+      window.removeEventListener("focus", onFocus);
+    };
+  }, []);
+
   function pushToast({ variant, title, message, ttlMs = 4500 }) {
     const id = `t-${Math.floor(Math.random() * 1e9)}`;
     const toast = { id, variant: variant || "info", title: title || "Notice", message: message || "" };
@@ -148,14 +178,25 @@ export default function TestCasesPage() {
     }, ttlMs);
   }
 
+  /**
+   * Unified gating:
+   * - If mock-import flag is enabled => allow imports regardless of API/mock mode.
+   *   (Requested: "Do not block enabling due to API mode when mock-import flag is true.")
+   * - If mock-import flag is disabled => block and explain why.
+   *
+   * NOTE: Some APIs may still be mock-only behind the scenes; in that case, errors will be shown on attempt.
+   */
   function getImportUnavailableReason() {
-    if (!isMockModeEnabled()) {
-      return "Import unavailable in API mode. Enable Mock mode in Settings to use TestPlan imports.";
+    if (mockImportEnabled) return "";
+
+    // Disabled only when setting is OFF (or explicitly disabled via localStorage).
+    // Provide the most actionable message.
+    const envFallback = String(process.env.REACT_APP_USE_MOCKS ?? "").trim().toLowerCase() === "true";
+    if (envFallback) {
+      return "Mock imports appear disabled via local settings (localStorage) even though REACT_APP_USE_MOCKS=true. Re-enable “Use mock TestPlan imports” in Settings.";
     }
-    if (!isMockImportEnabled()) {
-      return "Mock imports are disabled. Enable “Use mock TestPlan imports” in Settings.";
-    }
-    return "";
+
+    return "Mock imports are disabled. Enable “Use mock TestPlan imports” in Settings.";
   }
 
   function openAssetImport() {
@@ -233,7 +274,7 @@ export default function TestCasesPage() {
         title: "Import failed (Project Asset)",
         message:
           e?.message ||
-          "Unable to import asset. Ensure it is a publicly accessible Excel .xlsx TestPlan URL (mock mode only).",
+          "Unable to import asset. Ensure it is a publicly accessible Excel .xlsx TestPlan URL (mock imports enabled).",
         ttlMs: 8000,
       });
     } finally {
@@ -425,20 +466,12 @@ export default function TestCasesPage() {
   async function handleImportFileSelected(file) {
     if (!file) return;
 
-    if (!isMockModeEnabled()) {
+    const reason = getImportUnavailableReason();
+    if (reason) {
       pushToast({
         variant: "error",
         title: "Import unavailable",
-        message: "Enable Mock mode to import a TestPlan (API mode import is not implemented yet).",
-      });
-      return;
-    }
-
-    if (!isMockImportEnabled()) {
-      pushToast({
-        variant: "error",
-        title: "Mock import disabled",
-        message: "Enable “Use mock TestPlan imports” in Settings to import files into the mock store.",
+        message: reason,
       });
       return;
     }
@@ -479,6 +512,9 @@ export default function TestCasesPage() {
     }
   }
 
+  const importDisabledReason = getImportUnavailableReason();
+  const importButtonsDisabled = loading || importing || assetLoading || Boolean(importDisabledReason);
+
   return (
     <div className="page">
       <Toast toasts={toasts} onDismiss={(id) => setToasts((prev) => prev.filter((t) => t.id !== id))} />
@@ -488,8 +524,8 @@ export default function TestCasesPage() {
             <h1 className="page__title">Test Cases</h1>
             <p className="page__subtitle">
               Manage your test case library with project associations, searchable tags, and runtime parameters. Import
-              TestPlans from CSV, Excel (.xlsx), or JSON. In mock mode, you can also import directly from a Project
-              Assets document URL.
+              TestPlans from CSV, Excel (.xlsx), or JSON. When mock imports are enabled, you can also import directly
+              from a Project Assets document URL.
             </p>
           </div>
 
@@ -504,8 +540,8 @@ export default function TestCasesPage() {
             <Button
               variant="ghost"
               onClick={() => fileInputRef.current?.click()}
-              disabled={loading || importing || Boolean(getImportUnavailableReason())}
-              title={getImportUnavailableReason() || "Import a TestPlan file (mock mode only)."}
+              disabled={importButtonsDisabled}
+              title={importDisabledReason || "Import a TestPlan file."}
             >
               {importing ? "Importing…" : "Import TestPlan"}
             </Button>
@@ -513,8 +549,8 @@ export default function TestCasesPage() {
             <Button
               variant="secondary"
               onClick={openAssetImport}
-              disabled={loading || importing || assetLoading || Boolean(getImportUnavailableReason())}
-              title={getImportUnavailableReason() || "Import a TestPlan from a Project Asset URL (mock mode only)."}
+              disabled={importButtonsDisabled}
+              title={importDisabledReason || "Import a TestPlan from a Project Asset URL."}
             >
               Import from Project Assets
             </Button>
@@ -572,17 +608,29 @@ export default function TestCasesPage() {
           </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12, alignItems: "center" }}>
-            <Badge variant={isMockModeEnabled() ? "primary" : "neutral"}>
-              {isMockModeEnabled() ? "Mock mode" : "API mode"}
+            <Badge variant={isMockModeEnabled() ? "primary" : "neutral"}>{isMockModeEnabled() ? "Mock mode" : "API mode"}</Badge>
+
+            <Badge variant={mockImportEnabled ? "success" : "secondary"}>
+              {mockImportEnabled ? "Mock imports on" : "Mock imports off"}
             </Badge>
-            {isMockModeEnabled() ? (
-              <Badge variant={isMockImportEnabled() ? "success" : "secondary"}>
-                {isMockImportEnabled() ? "Mock imports on" : "Mock imports off"}
-              </Badge>
-            ) : null}
-            <div style={{ fontSize: 13, color: "rgba(17, 24, 39, 0.72)", lineHeight: 1.45 }}>
-              Test cases are loaded via the centralized API layer.
-            </div>
+
+            {!mockImportEnabled ? (
+              <div style={{ fontSize: 13, color: "var(--color-error)", fontWeight: 900, lineHeight: 1.35 }}>
+                Imports disabled: {importDisabledReason}
+              </div>
+            ) : (
+              <div style={{ fontSize: 13, color: "rgba(17, 24, 39, 0.72)", lineHeight: 1.45 }}>
+                Imports enabled (listening for Settings/localStorage changes).
+              </div>
+            )}
+          </div>
+
+          {/* Debug-ish detail, but still user-friendly: helps verify which flag is being read */}
+          <div style={{ marginTop: 10, fontSize: 12, color: "rgba(17, 24, 39, 0.62)", lineHeight: 1.45 }}>
+            <span style={{ fontWeight: 900 }}>Mock-import flag source:</span>{" "}
+            {mockImportDebug?.primaryRawValue == null ? "default/env" : `localStorage="${mockImportDebug.primaryRawValue}"`}{" "}
+            <span style={{ fontWeight: 900, marginLeft: 10 }}>REACT_APP_USE_MOCKS:</span>{" "}
+            {mockImportDebug?.envReactAppUseMocks || "(unset)"}
           </div>
 
           {error ? (
@@ -651,26 +699,17 @@ export default function TestCasesPage() {
         <Modal
           open={assetImportOpen}
           title="Import from Project Assets"
-          description="Mock mode only. Paste a Project Assets → Documents URL to an Excel (.xlsx) TestPlan and import it into the mock store."
+          description="Paste a Project Assets → Documents URL to an Excel (.xlsx) TestPlan and import it."
           onClose={() => {
             if (assetLoading) return;
             setAssetImportOpen(false);
           }}
           footer={
             <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
-              <Button
-                variant="ghost"
-                onClick={() => setAssetImportOpen(false)}
-                disabled={assetLoading}
-              >
+              <Button variant="ghost" onClick={() => setAssetImportOpen(false)} disabled={assetLoading}>
                 Cancel
               </Button>
-              <Button
-                variant="primary"
-                onClick={handleImportFromAssetUrl}
-                loading={assetLoading}
-                disabled={assetLoading}
-              >
+              <Button variant="primary" onClick={handleImportFromAssetUrl} loading={assetLoading} disabled={assetLoading}>
                 Load & Import
               </Button>
             </div>
@@ -683,8 +722,8 @@ export default function TestCasesPage() {
             placeholder="https://…/WiFi%20Function%20TestPlan.xlsx"
             ariaLabel="Project Asset URL"
             helperText={
-              getImportUnavailableReason()
-                ? `Import unavailable: ${getImportUnavailableReason()}`
+              importDisabledReason
+                ? `Import unavailable: ${importDisabledReason}`
                 : "Tip: The URL must be accessible from your browser (CORS/public access)."
             }
             disabled={assetLoading}
@@ -700,4 +739,3 @@ export default function TestCasesPage() {
     </div>
   );
 }
-
